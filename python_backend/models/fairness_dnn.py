@@ -1,6 +1,6 @@
 """
 Fairness Detector DNN
-6-layer architecture based on DICE paper
+Configurable architecture based on DICE paper
 """
 
 import torch
@@ -13,21 +13,26 @@ class FairnessDetectorDNN(nn.Module):
     """
     Deep Neural Network for detecting bias in datasets.
 
-    Architecture: Input → 64 → 32 → 16 → 8 → 4 → 2 (output)
-    All layers use ReLU activation except output layer.
-    Dropout (0.2) applied after each hidden layer for regularization.
+    Default architecture: Input → 64 → 32 → 16 → 8 → 4 → 2 (output)
+    Users can specify custom hidden layer sizes via the hidden_layers parameter.
+    All hidden layers use BatchNorm → ReLU → Dropout.
 
-    This architecture is based on the DICE paper:
+    Based on the DICE paper:
     "Information-Theoretic Testing and Debugging of Fairness Defects in DNNs"
     """
 
     def __init__(
-        self, input_dim: int, protected_indices: List[int], dropout_rate: float = 0.2
+        self,
+        input_dim: int,
+        protected_indices: List[int],
+        hidden_layers: Optional[List[int]] = None,
+        dropout_rate: float = 0.2,
     ):
         """
         Args:
             input_dim: Number of input features
             protected_indices: Indices of protected attributes in input
+            hidden_layers: List of hidden layer sizes (default: [64, 32, 16, 8, 4])
             dropout_rate: Dropout probability (default 0.2)
         """
         super(FairnessDetectorDNN, self).__init__()
@@ -36,22 +41,24 @@ class FairnessDetectorDNN(nn.Module):
         self.protected_indices = protected_indices
         self.dropout_rate = dropout_rate
 
-        # Define layers (6-layer architecture)
-        self.layer1 = nn.Linear(input_dim, 64)
-        self.layer2 = nn.Linear(64, 32)
-        self.layer3 = nn.Linear(32, 16)
-        self.layer4 = nn.Linear(16, 8)
-        self.layer5 = nn.Linear(8, 4)
-        self.output_layer = nn.Linear(4, 2)  # Binary classification
+        if hidden_layers is None:
+            hidden_layers = [64, 32, 16, 8, 4]
 
-        # Batch normalization for stable training
-        self.bn1 = nn.BatchNorm1d(64)
-        self.bn2 = nn.BatchNorm1d(32)
-        self.bn3 = nn.BatchNorm1d(16)
-        self.bn4 = nn.BatchNorm1d(8)
-        self.bn5 = nn.BatchNorm1d(4)
+        self.hidden_layer_sizes = hidden_layers
 
-        # Dropout layers
+        # Build layers dynamically
+        layer_dims = [input_dim] + hidden_layers
+        self.hidden_layers = nn.ModuleList()
+        self.batch_norms = nn.ModuleList()
+
+        for i in range(len(hidden_layers)):
+            self.hidden_layers.append(nn.Linear(layer_dims[i], layer_dims[i + 1]))
+            self.batch_norms.append(nn.BatchNorm1d(layer_dims[i + 1]))
+
+        # Output layer: always 2 (binary classification)
+        self.output_layer = nn.Linear(hidden_layers[-1], 2)
+
+        # Dropout
         self.dropout = nn.Dropout(dropout_rate)
 
         # Initialize weights using Xavier initialization
@@ -64,6 +71,11 @@ class FairnessDetectorDNN(nn.Module):
                 nn.init.xavier_uniform_(m.weight)
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
+
+    @property
+    def num_layers(self) -> int:
+        """Total number of layers (hidden + output)."""
+        return len(self.hidden_layers) + 1
 
     def forward(
         self, x: torch.Tensor, return_activations: bool = False
@@ -81,45 +93,13 @@ class FairnessDetectorDNN(nn.Module):
         """
         activations = []
 
-        # Layer 1
-        x = self.layer1(x)
-        x = self.bn1(x)
-        x = F.relu(x)
-        x = self.dropout(x)
-        if return_activations:
-            activations.append(x.detach().clone())
-
-        # Layer 2
-        x = self.layer2(x)
-        x = self.bn2(x)
-        x = F.relu(x)
-        x = self.dropout(x)
-        if return_activations:
-            activations.append(x.detach().clone())
-
-        # Layer 3
-        x = self.layer3(x)
-        x = self.bn3(x)
-        x = F.relu(x)
-        x = self.dropout(x)
-        if return_activations:
-            activations.append(x.detach().clone())
-
-        # Layer 4
-        x = self.layer4(x)
-        x = self.bn4(x)
-        x = F.relu(x)
-        x = self.dropout(x)
-        if return_activations:
-            activations.append(x.detach().clone())
-
-        # Layer 5
-        x = self.layer5(x)
-        x = self.bn5(x)
-        x = F.relu(x)
-        x = self.dropout(x)
-        if return_activations:
-            activations.append(x.detach().clone())
+        for layer, bn in zip(self.hidden_layers, self.batch_norms):
+            x = layer(x)
+            x = bn(x)
+            x = F.relu(x)
+            x = self.dropout(x)
+            if return_activations:
+                activations.append(x.detach().clone())
 
         # Output layer (no activation)
         x = self.output_layer(x)
@@ -134,29 +114,21 @@ class FairnessDetectorDNN(nn.Module):
 
         Args:
             x: Input tensor
-            layer_idx: Layer index (0-5)
+            layer_idx: Layer index (0 to num_layers-1)
 
         Returns:
             Activation tensor at specified layer
         """
-        layers = [
-            self.layer1,
-            self.layer2,
-            self.layer3,
-            self.layer4,
-            self.layer5,
-            self.output_layer,
-        ]
-        batch_norms = [self.bn1, self.bn2, self.bn3, self.bn4, self.bn5, None]
+        all_layers = list(self.hidden_layers) + [self.output_layer]
+        all_bns = list(self.batch_norms) + [None]
 
         for i in range(layer_idx + 1):
-            x = layers[i](x)
-            if batch_norms[i] is not None and i < len(batch_norms) - 1:
-                x = batch_norms[i](x)
+            x = all_layers[i](x)
+            if all_bns[i] is not None:
+                x = all_bns[i](x)
             if i < layer_idx:  # Apply activation for intermediate layers
                 x = F.relu(x)
-                if i > 0:
-                    x = self.dropout(x)
+                x = self.dropout(x)
 
         return x
 
@@ -344,5 +316,14 @@ if __name__ == "__main__":
     # Test layer output
     layer_2_output = model.get_layer_output(x, 2)
     print(f"Layer 2 output shape: {layer_2_output.shape}")  # Should be (32, 16)
+
+    # Test custom architecture
+    custom_model = FairnessDetectorDNN(
+        input_dim, protected_indices, hidden_layers=[128, 64, 32]
+    )
+    print(f"Custom model has {custom_model.count_parameters()} trainable parameters")
+    print(f"Custom model num_layers: {custom_model.num_layers}")  # Should be 4
+    custom_output = custom_model(x)
+    print(f"Custom output shape: {custom_output.shape}")  # Should be (32, 2)
 
     print("✅ All tests passed!")
