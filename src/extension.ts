@@ -15,6 +15,7 @@ function getConfig() {
         // Training settings
         epochs: config.get<number>('training.epochs', 30),
         batchSize: config.get<number>('training.batchSize', 32),
+        hiddenLayers: config.get<string>('training.hiddenLayers', '64,32,16,8,4'),
         // Analysis settings
         qidThreshold: config.get<number>('analysis.qidThreshold', 0.1),
         maxSamples: config.get<number>('analysis.maxSamples', 500),
@@ -45,9 +46,9 @@ const DEFAULT_SERVER_PORT = 8765;
 
 // Error message mappings for user-friendly messages
 const ERROR_MESSAGES: Record<string, string> = {
-    'ECONNREFUSED': 'Cannot connect to the analysis server. Please wait for it to start or restart VS Code.',
-    'ETIMEDOUT': 'The analysis is taking longer than expected. This may happen with large datasets.',
-    'ENOTFOUND': 'Network error. Please check your connection.',
+    ECONNREFUSED: 'Cannot connect to the analysis server. Please wait for it to start or restart VS Code.',
+    ETIMEDOUT: 'The analysis is taking longer than expected. This may happen with large datasets.',
+    ENOTFOUND: 'Network error. Please check your connection.',
     'Train model first': 'Please run training first before performing analysis.',
 };
 
@@ -81,6 +82,18 @@ async function startBackend(context: vscode.ExtensionContext) {
     const serverPort = config.serverPort;
     const serverUrl = `http://localhost:${serverPort}`;
 
+    // Check if server is already running
+    try {
+        await axios.get(`${serverUrl}/`, { timeout: 1000 });
+        console.log(`Server already running at ${serverUrl}`);
+        updateStatusBar('$(check) Server Connected', 'Connected to existing Python backend');
+        vscode.window.showInformationMessage('Connected to existing Fairness Analysis Server!');
+        return;
+    } catch {
+        // Server not running, proceed to spawn
+        console.log(`Server not running, starting new instance...`);
+    }
+
     const pythonPath = vscode.workspace.getConfiguration('python').get<string>('defaultInterpreterPath') || 'python3';
     const backendPath = context.asAbsolutePath('python_backend');
 
@@ -112,7 +125,7 @@ async function startBackend(context: vscode.ExtensionContext) {
 
             // Wait for server to start with retries
             let attempts = 0;
-            const maxAttempts = 10;
+            const maxAttempts = 15;
 
             while (attempts < maxAttempts) {
                 await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -120,9 +133,12 @@ async function startBackend(context: vscode.ExtensionContext) {
 
                 progress.report({
                     message: `Connecting to server (attempt ${attempts}/${maxAttempts})...`,
-                    increment: 10,
+                    increment: 100 / maxAttempts,
                 });
-                updateStatusBar(`$(sync~spin) Connecting... [${attempts}/${maxAttempts}]`, 'Waiting for backend server');
+                updateStatusBar(
+                    `$(sync~spin) Connecting... [${attempts}/${maxAttempts}]`,
+                    'Waiting for backend server',
+                );
 
                 try {
                     await axios.get(`${serverUrl}/`, { timeout: 2000 });
@@ -292,18 +308,17 @@ function setStatusBarError(message: string) {
 /**
  * Fetch column names from CSV file
  */
-async function fetchColumns(filePath: string): Promise<{ columns: string[]; sampleData: any[] } | null> {
+async function fetchColumns(
+    filePath: string,
+): Promise<{ columns: string[]; sampleData: any[]; detectedSensitive: string[] } | null> {
     const serverUrl = getServerUrl();
     try {
-        const response = await axios.post(
-            `${serverUrl}/columns`,
-            { file_path: filePath },
-            { timeout: 10000 },
-        );
+        const response = await axios.post(`${serverUrl}/columns`, { file_path: filePath }, { timeout: 10000 });
 
         return {
             columns: response.data.columns,
             sampleData: response.data.sample_data,
+            detectedSensitive: response.data.detected_sensitive || [],
         };
     } catch (error) {
         const parsed = parseError(error);
@@ -317,10 +332,7 @@ async function analyzeDataset(uri: vscode.Uri) {
 
     // Verify it's a CSV
     if (!filePath.endsWith('.csv')) {
-        showError(
-            'Invalid File Type',
-            'Please select a CSV file (.csv extension required).',
-        );
+        showError('Invalid File Type', 'Please select a CSV file (.csv extension required).');
         return;
     }
 
@@ -344,13 +356,16 @@ async function analyzeDataset(uri: vscode.Uri) {
         },
     );
 
-    if (!columnData || (columnData as { columns: string[]; sampleData: any[] }).columns.length === 0) {
+    if (
+        !columnData ||
+        (columnData as { columns: string[]; sampleData: any[]; detectedSensitive: string[] }).columns.length === 0
+    ) {
         showError('Empty Dataset', 'The CSV file appears to be empty or has no columns.');
         return;
     }
 
     // Cast to proper type after null check
-    const validColumnData = columnData as { columns: string[]; sampleData: any[] };
+    const validColumnData = columnData as { columns: string[]; sampleData: any[]; detectedSensitive: string[] };
 
     // Create QuickPick items with column info
     const quickPickItems: vscode.QuickPickItem[] = validColumnData.columns.map((col: string, index: number) => {
@@ -379,11 +394,101 @@ async function analyzeDataset(uri: vscode.Uri) {
 
     const labelColumn = selectedColumn.label;
 
+    // Step 2: Select protected attributes (multi-select with auto-detected pre-selected)
+    const protectedItems: vscode.QuickPickItem[] = validColumnData.columns
+        .filter((col: string) => col !== labelColumn)
+        .map((col: string) => ({
+            label: col,
+            picked: validColumnData.detectedSensitive.includes(col),
+            description: validColumnData.detectedSensitive.includes(col) ? '(auto-detected)' : '',
+        }));
+
+    const selectedProtected = await vscode.window.showQuickPick(protectedItems, {
+        canPickMany: true,
+        placeHolder: 'Select protected/sensitive attributes (auto-detected ones are pre-selected)',
+        title: 'Fairness Analysis: Protected Attributes',
+    });
+
+    if (!selectedProtected || selectedProtected.length === 0) {
+        showError('No Protected Attributes', 'At least one protected attribute must be selected.');
+        return;
+    }
+
+    const protectedFeatures = selectedProtected.map((item) => item.label);
+
+    // Step 3: Select DNN architecture
+    const defaultLayers = getConfig().hiddenLayers;
+    const archChoice = await vscode.window.showQuickPick(
+        [
+            {
+                label: `Default (${defaultLayers})`,
+                description: 'DICE paper architecture',
+                detail: `Hidden layers: [${defaultLayers}] → Output(2)`,
+                value: defaultLayers,
+            },
+            {
+                label: 'Wide (128,64,32,16)',
+                description: '4-layer wider network',
+                detail: 'Hidden layers: [128, 64, 32, 16] → Output(2)',
+                value: '128,64,32,16',
+            },
+            {
+                label: 'Deep (256,128,64,32,16,8)',
+                description: '6-layer deep network',
+                detail: 'Hidden layers: [256, 128, 64, 32, 16, 8] → Output(2)',
+                value: '256,128,64,32,16,8',
+            },
+            {
+                label: 'Custom...',
+                description: 'Enter custom layer sizes',
+                detail: 'Specify comma-separated hidden layer sizes',
+                value: 'custom',
+            },
+        ],
+        {
+            placeHolder: 'Select DNN architecture for fairness analysis',
+            title: 'Fairness Analysis: Model Architecture',
+        },
+    );
+
+    if (!archChoice) {
+        return; // User cancelled
+    }
+
+    let hiddenLayersStr = (archChoice as any).value as string;
+
+    if (hiddenLayersStr === 'custom') {
+        const customInput = await vscode.window.showInputBox({
+            prompt: 'Enter hidden layer sizes (comma-separated, e.g., 128,64,32)',
+            value: defaultLayers,
+            validateInput: (value) => {
+                const nums = value.split(',').map((s) => parseInt(s.trim(), 10));
+                if (nums.some((n) => isNaN(n) || n <= 0)) {
+                    return 'All values must be positive integers';
+                }
+                if (nums.length < 2) {
+                    return 'At least 2 hidden layers required';
+                }
+                return null;
+            },
+        });
+
+        if (!customInput) {
+            return; // User cancelled
+        }
+        hiddenLayersStr = customInput;
+    }
+
+    const hiddenLayers = hiddenLayersStr
+        .split(',')
+        .map((s: string) => parseInt(s.trim(), 10))
+        .filter((n: number) => !isNaN(n) && n > 0);
+
     // Run the analysis with improved progress
-    await runAnalysis(filePath, labelColumn);
+    await runAnalysis(filePath, labelColumn, protectedFeatures, hiddenLayers);
 }
 
-async function runAnalysis(filePath: string, labelColumn: string) {
+async function runAnalysis(filePath: string, labelColumn: string, protectedFeatures: string[], hiddenLayers: number[]) {
     const config = getConfig();
     const serverUrl = getServerUrl();
 
@@ -398,10 +503,10 @@ async function runAnalysis(filePath: string, labelColumn: string) {
             const fileName = path.basename(filePath);
 
             try {
-                // Step 1: Train model (0-40%)
+                // Step 1/6: Train model (0-30%)
                 progress.report({
                     increment: 0,
-                    message: 'Step 1/4: Training neural network model...',
+                    message: 'Step 1/6: Training neural network model...',
                 });
                 updateStatusBar('$(sync~spin) Training DNN...', `Training on ${fileName}`);
 
@@ -410,30 +515,51 @@ async function runAnalysis(filePath: string, labelColumn: string) {
                     {
                         file_path: filePath,
                         label_column: labelColumn,
+                        sensitive_features: protectedFeatures,
                         num_epochs: config.epochs,
                         batch_size: config.batchSize,
+                        hidden_layers: hiddenLayers,
                     },
                     { timeout: 300000 },
                 );
 
                 const trainTime = Math.round((Date.now() - startTime) / 1000);
                 progress.report({
-                    increment: 40,
-                    message: `Step 1/4: Training complete (${trainTime}s) - ${trainResponse.data.accuracy.toFixed(1)}% accuracy`,
+                    increment: 30,
+                    message: `Step 1/6: Training complete (${trainTime}s) - ${trainResponse.data.accuracy.toFixed(
+                        1,
+                    )}% accuracy`,
                 });
                 updateStatusBar(
                     `$(check) Trained [${trainResponse.data.accuracy.toFixed(0)}%]`,
                     `Training complete: ${trainResponse.data.accuracy.toFixed(1)}% accuracy`,
                 );
 
-                // Step 2: Analyze (40-65%)
+                // Step 2/6: Internal space visualization (30-38%)
                 progress.report({
                     increment: 0,
-                    message: 'Step 2/4: Computing fairness metrics (QID analysis)...',
+                    message: 'Step 2/6: Computing internal space visualization...',
+                });
+                updateStatusBar('$(eye) Computing activations...', 'Dimensionality reduction');
+
+                const activationsResponse = await axios.post(
+                    `${serverUrl}/activations`,
+                    { method: 'pca', max_samples: config.maxSamples },
+                    { timeout: 60000 },
+                );
+
+                progress.report({
+                    increment: 8,
+                    message: 'Step 2/6: Internal space computed',
+                });
+
+                // Step 3/6: QID Analysis (38-55%)
+                progress.report({
+                    increment: 0,
+                    message: 'Step 3/6: Computing fairness metrics (QID analysis)...',
                 });
                 updateStatusBar('$(beaker) Computing QID...', 'Calculating fairness metrics');
 
-                const protectedFeatures = trainResponse.data.protected_features;
                 const protectedValues: Record<string, number[]> = {};
                 protectedFeatures.forEach((_feature: string, idx: number) => {
                     protectedValues[idx.toString()] = [0.0, 1.0];
@@ -453,18 +579,20 @@ async function runAnalysis(filePath: string, labelColumn: string) {
                 );
 
                 progress.report({
-                    increment: 25,
-                    message: `Step 2/4: QID metrics computed - Mean QID: ${analyzeResponse.data.qid_metrics.mean_qid.toFixed(4)} bits`,
+                    increment: 17,
+                    message: `Step 3/6: QID metrics computed - Mean QID: ${analyzeResponse.data.qid_metrics.mean_qid.toFixed(
+                        4,
+                    )} bits`,
                 });
                 updateStatusBar(
                     `$(graph) QID: ${analyzeResponse.data.qid_metrics.mean_qid.toFixed(2)} bits`,
                     `Mean QID: ${analyzeResponse.data.qid_metrics.mean_qid.toFixed(4)} bits`,
                 );
 
-                // Step 3: Search (65-85%)
+                // Step 4/6: Search (55-70%)
                 progress.report({
                     increment: 0,
-                    message: 'Step 3/4: Searching for discriminatory instances...',
+                    message: 'Step 4/6: Searching for discriminatory instances...',
                 });
                 updateStatusBar('$(search) Searching...', 'Finding discriminatory instances');
 
@@ -479,18 +607,18 @@ async function runAnalysis(filePath: string, labelColumn: string) {
                 );
 
                 progress.report({
-                    increment: 20,
-                    message: `Step 3/4: Found ${searchResponse.data.search_results.num_found} discriminatory instances`,
+                    increment: 15,
+                    message: `Step 4/6: Found ${searchResponse.data.search_results.num_found} discriminatory instances`,
                 });
                 updateStatusBar(
                     `$(bug) Found ${searchResponse.data.search_results.num_found}`,
                     `Found ${searchResponse.data.search_results.num_found} discriminatory instances`,
                 );
 
-                // Step 4: Debug (85-100%)
+                // Step 5/6: Debug (70-82%)
                 progress.report({
                     increment: 0,
-                    message: 'Step 4/4: Localizing biased layers and neurons...',
+                    message: 'Step 5/6: Localizing biased layers and neurons...',
                 });
                 updateStatusBar('$(telescope) Debugging...', 'Localizing biased neurons');
 
@@ -504,9 +632,27 @@ async function runAnalysis(filePath: string, labelColumn: string) {
                     { timeout: 120000 },
                 );
 
+                progress.report({
+                    increment: 12,
+                    message: 'Step 5/6: Causal debugging complete',
+                });
+
+                // Step 6/6: LIME & SHAP Explanations (82-100%)
+                progress.report({
+                    increment: 0,
+                    message: 'Step 6/6: Computing LIME & SHAP explanations...',
+                });
+                updateStatusBar('$(lightbulb) Computing explanations...', 'Running LIME and SHAP');
+
+                const explainResponse = await axios.post(
+                    `${serverUrl}/explain`,
+                    { method: 'both', num_instances: 10, max_background: 100 },
+                    { timeout: 180000 },
+                );
+
                 const totalTime = Math.round((Date.now() - startTime) / 1000);
                 progress.report({
-                    increment: 15,
+                    increment: 18,
                     message: `Analysis complete! Total time: ${totalTime}s`,
                 });
 
@@ -519,6 +665,8 @@ async function runAnalysis(filePath: string, labelColumn: string) {
                     analysis: analyzeResponse.data,
                     search: searchResponse.data,
                     debug: debugResponse.data,
+                    activations: activationsResponse.data.activations,
+                    explanations: explainResponse.data.explanations,
                     metadata: {
                         file: fileName,
                         labelColumn: labelColumn,
@@ -559,6 +707,8 @@ function getWebviewHtml(results: any): string {
     const searchResults = results.search.search_results;
     const layerAnalysis = results.debug?.layer_analysis;
     const neuronAnalysis = results.debug?.neuron_analysis;
+    const activationsData = results.activations || null;
+    const explanationsData = results.explanations || null;
     const metadata = results.metadata;
 
     // Determine overall fairness status
@@ -983,14 +1133,16 @@ function getWebviewHtml(results: any): string {
                 <div class="card-description">Test set classification accuracy</div>
                 <div class="progress-container">
                     <div class="progress-bar">
-                        <div class="progress-fill" style="width: ${results.training.accuracy}%; background: var(--accent-green);"></div>
+                        <div class="progress-fill" style="width: ${
+                            results.training.accuracy
+                        }%; background: var(--accent-green);"></div>
                     </div>
                 </div>
             </div>
             <div class="card">
                 <div class="card-header">
                     <span class="card-label">Protected Features</span>
-                    <span class="card-badge badge-info">Auto-detected</span>
+                    <span class="card-badge badge-info">User-Selected</span>
                 </div>
                 <div class="card-value">${results.training.protected_features.length}</div>
                 <div class="card-description">${results.training.protected_features.join(', ')}</div>
@@ -999,11 +1151,51 @@ function getWebviewHtml(results: any): string {
                 <div class="card-header">
                     <span class="card-label">Model Size</span>
                 </div>
-                <div class="card-value">${(results.training.num_parameters / 1000).toFixed(1)}<span class="card-unit">K params</span></div>
+                <div class="card-value">${(results.training.num_parameters / 1000).toFixed(
+                    1,
+                )}<span class="card-unit">K params</span></div>
                 <div class="card-description">Total trainable parameters</div>
             </div>
         </div>
     </div>
+
+    ${
+        activationsData
+            ? `
+    <!-- Internal Space Visualization Section -->
+    <div class="section">
+        <div class="section-header">
+            <div class="section-icon" style="background: rgba(156, 39, 176, 0.2);">
+                <span style="color: var(--accent-purple);">🔬</span>
+            </div>
+            <h2 class="section-title">Internal Space Visualization</h2>
+        </div>
+        <div class="interpretation-box" style="margin-bottom: 16px;">
+            <div class="interpretation-title">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 12.5a5.5 5.5 0 1 1 0-11 5.5 5.5 0 0 1 0 11zM7 4h2v5H7V4zm0 6h2v2H7v-2z"/></svg>
+                How to Read These Plots
+            </div>
+            <div class="interpretation-content">
+                Each chart shows the <strong>${activationsData.method.toUpperCase()}</strong> 2D projection of layer activations for <strong>${activationsData.num_samples}</strong> test instances.
+                Points are colored by <strong>prediction label</strong>. Clusters that separate by protected attribute indicate the model is learning to encode protected information at that layer.
+            </div>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 16px;">
+            ${activationsData.layers
+                .map(
+                    (layer: any, idx: number) => `
+                <div class="chart-container">
+                    <div class="chart-title">${layer.layer_name} Activations (${activationsData.method.toUpperCase()})</div>
+                    <div id="activation-layer-${idx}" style="height: 350px;"></div>
+                </div>
+            `,
+                )
+                .join('')}
+        </div>
+    </div>
+    `
+            : ''
+    }
 
     <!-- QID Metrics Section -->
     <div class="section">
@@ -1017,7 +1209,9 @@ function getWebviewHtml(results: any): string {
             <div class="card">
                 <div class="card-header">
                     <span class="card-label">Mean QID</span>
-                    <span class="card-badge ${qidMetrics.mean_qid > 1.0 ? 'badge-warning' : 'badge-success'}">${qidMetrics.mean_qid > 1.0 ? 'High' : 'Low'}</span>
+                    <span class="card-badge ${qidMetrics.mean_qid > 1.0 ? 'badge-warning' : 'badge-success'}">${
+                        qidMetrics.mean_qid > 1.0 ? 'High' : 'Low'
+                    }</span>
                 </div>
                 <div class="card-value">${qidMetrics.mean_qid.toFixed(4)}<span class="card-unit">bits</span></div>
                 <div class="card-description">Average protected information used in decisions. Lower is better.</div>
@@ -1025,7 +1219,9 @@ function getWebviewHtml(results: any): string {
             <div class="card">
                 <div class="card-header">
                     <span class="card-label">Max QID</span>
-                    <span class="card-badge ${qidMetrics.max_qid > 2.0 ? 'badge-danger' : 'badge-success'}">${qidMetrics.max_qid > 2.0 ? 'Critical' : 'Normal'}</span>
+                    <span class="card-badge ${qidMetrics.max_qid > 2.0 ? 'badge-danger' : 'badge-success'}">${
+                        qidMetrics.max_qid > 2.0 ? 'Critical' : 'Normal'
+                    }</span>
                 </div>
                 <div class="card-value">${qidMetrics.max_qid.toFixed(4)}<span class="card-unit">bits</span></div>
                 <div class="card-description">Worst-case protected information leakage.</div>
@@ -1033,13 +1229,22 @@ function getWebviewHtml(results: any): string {
             <div class="card">
                 <div class="card-header">
                     <span class="card-label">Discriminatory Instances</span>
-                    <span class="card-badge ${qidMetrics.pct_discriminatory > 10 ? 'badge-warning' : 'badge-success'}">${qidMetrics.pct_discriminatory > 10 ? 'Concerning' : 'Acceptable'}</span>
+                    <span class="card-badge ${
+                        qidMetrics.pct_discriminatory > 10 ? 'badge-warning' : 'badge-success'
+                    }">${qidMetrics.pct_discriminatory > 10 ? 'Concerning' : 'Acceptable'}</span>
                 </div>
-                <div class="card-value">${qidMetrics.num_discriminatory}<span class="card-unit">(${qidMetrics.pct_discriminatory.toFixed(1)}%)</span></div>
+                <div class="card-value">${
+                    qidMetrics.num_discriminatory
+                }<span class="card-unit">(${qidMetrics.pct_discriminatory.toFixed(1)}%)</span></div>
                 <div class="card-description">Instances with QID > 0.1 bits showing potential bias.</div>
                 <div class="progress-container">
                     <div class="progress-bar">
-                        <div class="progress-fill" style="width: ${Math.min(qidMetrics.pct_discriminatory, 100)}%; background: ${qidMetrics.pct_discriminatory > 10 ? 'var(--accent-orange)' : 'var(--accent-green)'};"></div>
+                        <div class="progress-fill" style="width: ${Math.min(
+                            qidMetrics.pct_discriminatory,
+                            100,
+                        )}%; background: ${
+                            qidMetrics.pct_discriminatory > 10 ? 'var(--accent-orange)' : 'var(--accent-green)'
+                        };"></div>
                     </div>
                     <div class="progress-labels">
                         <span>0%</span>
@@ -1051,18 +1256,24 @@ function getWebviewHtml(results: any): string {
             <div class="card">
                 <div class="card-header">
                     <span class="card-label">Disparate Impact Ratio</span>
-                    <span class="card-badge ${qidMetrics.mean_disparate_impact < 0.8 ? 'badge-danger' : 'badge-success'}">${qidMetrics.mean_disparate_impact < 0.8 ? 'Violation' : 'Compliant'}</span>
+                    <span class="card-badge ${
+                        qidMetrics.mean_disparate_impact < 0.8 ? 'badge-danger' : 'badge-success'
+                    }">${qidMetrics.mean_disparate_impact < 0.8 ? 'Violation' : 'Compliant'}</span>
                 </div>
                 <div class="card-value">${qidMetrics.mean_disparate_impact.toFixed(3)}</div>
                 <div class="card-description">Ratio should be ≥ 0.8 for legal compliance.</div>
-                <div class="compliance-box ${qidMetrics.mean_disparate_impact >= 0.8 ? 'compliance-pass' : 'compliance-fail'}">
+                <div class="compliance-box ${
+                    qidMetrics.mean_disparate_impact >= 0.8 ? 'compliance-pass' : 'compliance-fail'
+                }">
                     <div class="compliance-header">
                         ${qidMetrics.mean_disparate_impact >= 0.8 ? '✓ Passes 80% Rule' : '✗ Violates 80% Rule'}
                     </div>
                     <div class="compliance-text">
-                        ${qidMetrics.mean_disparate_impact >= 0.8
-                            ? 'Model meets legal fairness thresholds for hiring/lending decisions.'
-                            : 'Model may exhibit legally actionable discrimination. Consider retraining with fairness constraints.'}
+                        ${
+                            qidMetrics.mean_disparate_impact >= 0.8
+                                ? 'Model meets legal fairness thresholds for hiring/lending decisions.'
+                                : 'Model may exhibit legally actionable discrimination. Consider retraining with fairness constraints.'
+                        }
                     </div>
                 </div>
             </div>
@@ -1112,7 +1323,9 @@ function getWebviewHtml(results: any): string {
         </div>
     </div>
 
-    ${layerAnalysis ? `
+    ${
+        layerAnalysis
+            ? `
     <!-- Layer Analysis Section -->
     <div class="section">
         <div class="section-header">
@@ -1125,13 +1338,17 @@ function getWebviewHtml(results: any): string {
             <div class="card">
                 <div class="card-header">
                     <span class="card-label">Most Biased Layer</span>
-                    <span class="card-badge ${layerAnalysis.biased_layer.sensitivity > 0.5 ? 'badge-warning' : 'badge-info'}">
+                    <span class="card-badge ${
+                        layerAnalysis.biased_layer.sensitivity > 0.5 ? 'badge-warning' : 'badge-info'
+                    }">
                         ${layerAnalysis.biased_layer.sensitivity > 0.5 ? 'High Sensitivity' : 'Moderate'}
                     </span>
                 </div>
                 <div class="card-value">${layerAnalysis.biased_layer.layer_name}</div>
                 <div class="card-description">
-                    Contains ${layerAnalysis.biased_layer.neuron_count} neurons with sensitivity score of ${layerAnalysis.biased_layer.sensitivity.toFixed(4)}
+                    Contains ${
+                        layerAnalysis.biased_layer.neuron_count
+                    } neurons with sensitivity score of ${layerAnalysis.biased_layer.sensitivity.toFixed(4)}
                 </div>
             </div>
         </div>
@@ -1157,7 +1374,9 @@ function getWebviewHtml(results: any): string {
                     <span class="card-label">Top Biased Neurons</span>
                 </div>
                 <div class="neuron-list">
-                    ${neuronAnalysis.map((n: any, idx: number) => `
+                    ${neuronAnalysis
+                        .map(
+                            (n: any, idx: number) => `
                         <div class="neuron-item">
                             <div class="neuron-info">
                                 <div class="neuron-rank">${idx + 1}</div>
@@ -1165,7 +1384,9 @@ function getWebviewHtml(results: any): string {
                             </div>
                             <span class="neuron-score">Impact: ${n.impact_score.toFixed(4)}</span>
                         </div>
-                    `).join('')}
+                    `,
+                        )
+                        .join('')}
                 </div>
             </div>
         </div>
@@ -1175,7 +1396,73 @@ function getWebviewHtml(results: any): string {
             <div id="neuron-chart" style="height: 300px;"></div>
         </div>
     </div>
-    ` : ''}
+    `
+            : ''
+    }
+
+    ${
+        explanationsData?.shap
+            ? `
+    <!-- SHAP Explanations Section -->
+    <div class="section">
+        <div class="section-header">
+            <div class="section-icon" style="background: rgba(255, 152, 0, 0.2);">
+                <span style="color: var(--accent-orange);">📊</span>
+            </div>
+            <h2 class="section-title">SHAP Feature Importance</h2>
+        </div>
+        <div class="interpretation-box" style="margin-bottom: 16px;">
+            <div class="interpretation-title">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 12.5a5.5 5.5 0 1 1 0-11 5.5 5.5 0 0 1 0 11zM7 4h2v5H7V4zm0 6h2v2H7v-2z"/></svg>
+                What are SHAP Values?
+            </div>
+            <div class="interpretation-content">
+                <strong>SHAP (SHapley Additive exPlanations)</strong> uses game theory to compute the contribution of each feature to the model's prediction.
+                Higher bars indicate features with more influence. Features related to protected attributes may indicate bias pathways.
+            </div>
+        </div>
+        <div class="chart-container">
+            <div class="chart-title">Global Feature Importance (Mean |SHAP Value|)</div>
+            <div id="shap-global-chart" style="height: 400px;"></div>
+        </div>
+        <div class="chart-container" style="margin-top: 16px;">
+            <div class="chart-title">SHAP Values for Individual Instances</div>
+            <div id="shap-beeswarm-chart" style="height: 400px;"></div>
+        </div>
+    </div>
+    `
+            : ''
+    }
+
+    ${
+        explanationsData?.lime
+            ? `
+    <!-- LIME Explanations Section -->
+    <div class="section">
+        <div class="section-header">
+            <div class="section-icon" style="background: rgba(79, 195, 247, 0.2);">
+                <span style="color: var(--accent-blue);">🔍</span>
+            </div>
+            <h2 class="section-title">LIME Local Explanations</h2>
+        </div>
+        <div class="interpretation-box" style="margin-bottom: 16px;">
+            <div class="interpretation-title">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 12.5a5.5 5.5 0 1 1 0-11 5.5 5.5 0 0 1 0 11zM7 4h2v5H7V4zm0 6h2v2H7v-2z"/></svg>
+                What is LIME?
+            </div>
+            <div class="interpretation-content">
+                <strong>LIME (Local Interpretable Model-agnostic Explanations)</strong> explains individual predictions by learning a simple local model.
+                It shows which features push the prediction toward or away from each class. Protected attributes appearing prominently suggest discrimination.
+            </div>
+        </div>
+        <div class="chart-container">
+            <div class="chart-title">Aggregated Feature Importance (LIME)</div>
+            <div id="lime-global-chart" style="height: 400px;"></div>
+        </div>
+    </div>
+    `
+            : ''
+    }
 
     <!-- Interpretation Section -->
     <div class="section">
@@ -1383,6 +1670,103 @@ function getWebviewHtml(results: any): string {
                 ...chartLayout,
                 xaxis: { ...chartLayout.xaxis, title: { text: 'Neuron', font: { color: '#a0a0a0' } } },
                 yaxis: { ...chartLayout.yaxis, title: { text: 'Impact Score', font: { color: '#a0a0a0' } } }
+            }, { responsive: true });
+        }
+
+        // Internal Space Activation Charts
+        const activationsData = ${JSON.stringify(activationsData)};
+        if (activationsData && activationsData.layers) {
+            activationsData.layers.forEach(function(layer, idx) {
+                const traceByLabel = {
+                    x: layer.x,
+                    y: layer.y,
+                    mode: 'markers',
+                    type: 'scatter',
+                    marker: {
+                        size: 5,
+                        color: activationsData.labels,
+                        colorscale: [[0, '#4fc3f7'], [1, '#f44336']],
+                        opacity: 0.6,
+                        showscale: true,
+                        colorbar: { title: { text: 'Label', font: { color: '#a0a0a0' } }, tickfont: { color: '#a0a0a0' } }
+                    },
+                    text: activationsData.labels.map(function(l, i) {
+                        return 'Label: ' + l + '<br>Protected: ' + activationsData.protected[i].toFixed(2);
+                    }),
+                    hoverinfo: 'text'
+                };
+                Plotly.newPlot('activation-layer-' + idx, [traceByLabel], {
+                    ...chartLayout,
+                    xaxis: { ...chartLayout.xaxis, title: { text: 'Component 1', font: { color: '#a0a0a0' } } },
+                    yaxis: { ...chartLayout.yaxis, title: { text: 'Component 2', font: { color: '#a0a0a0' } } }
+                }, { responsive: true });
+            });
+        }
+
+        // SHAP Charts
+        const shapData = ${JSON.stringify(explanationsData?.shap || null)};
+        if (shapData) {
+            // Global importance bar chart (sorted)
+            const shapIndices = shapData.global_importance
+                .map(function(val, idx) { return { val: val, idx: idx }; })
+                .sort(function(a, b) { return b.val - a.val; });
+
+            Plotly.newPlot('shap-global-chart', [{
+                y: shapIndices.map(function(d) { return shapData.feature_names[d.idx]; }),
+                x: shapIndices.map(function(d) { return d.val; }),
+                type: 'bar',
+                orientation: 'h',
+                marker: { color: '#ff9800', line: { width: 0 } },
+                hovertemplate: '%{y}: %{x:.4f}<extra></extra>'
+            }], {
+                ...chartLayout,
+                margin: { t: 20, r: 20, b: 50, l: 150 },
+                yaxis: { ...chartLayout.yaxis, autorange: 'reversed' },
+                xaxis: { ...chartLayout.xaxis, title: { text: 'Mean |SHAP Value|', font: { color: '#a0a0a0' } } }
+            }, { responsive: true });
+
+            // Beeswarm chart (SHAP values per feature for each instance)
+            if (shapData.shap_values && shapData.shap_values.length > 0) {
+                const beeswarmTraces = [];
+                for (var instIdx = 0; instIdx < shapData.shap_values.length; instIdx++) {
+                    beeswarmTraces.push({
+                        y: shapData.feature_names,
+                        x: shapData.shap_values[instIdx],
+                        type: 'scatter',
+                        mode: 'markers',
+                        marker: { size: 6, opacity: 0.6 },
+                        name: 'Instance ' + (instIdx + 1),
+                        hovertemplate: '%{y}: %{x:.4f}<extra></extra>'
+                    });
+                }
+                Plotly.newPlot('shap-beeswarm-chart', beeswarmTraces, {
+                    ...chartLayout,
+                    margin: { t: 20, r: 20, b: 50, l: 150 },
+                    showlegend: false,
+                    xaxis: { ...chartLayout.xaxis, title: { text: 'SHAP Value (impact on prediction)', font: { color: '#a0a0a0' } } }
+                }, { responsive: true });
+            }
+        }
+
+        // LIME Charts
+        const limeData = ${JSON.stringify(explanationsData?.lime || null)};
+        if (limeData) {
+            const limeIndices = limeData.aggregated_importance
+                .map(function(val, idx) { return { val: val, idx: idx }; })
+                .sort(function(a, b) { return b.val - a.val; });
+
+            Plotly.newPlot('lime-global-chart', [{
+                y: limeIndices.map(function(d) { return limeData.feature_names[d.idx]; }),
+                x: limeIndices.map(function(d) { return d.val; }),
+                type: 'bar',
+                orientation: 'h',
+                marker: { color: '#4fc3f7', line: { width: 0 } },
+                hovertemplate: '%{y}: %{x:.4f}<extra></extra>'
+            }], {
+                ...chartLayout,
+                margin: { t: 20, r: 20, b: 50, l: 150 },
+                yaxis: { ...chartLayout.yaxis, autorange: 'reversed' },
+                xaxis: { ...chartLayout.xaxis, title: { text: 'Mean |LIME Weight|', font: { color: '#a0a0a0' } } }
             }, { responsive: true });
         }
     </script>
