@@ -89,6 +89,12 @@
                     "maximum": 256,
                     "scope": "resource"
                 },
+                "fairlint-dl.training.hiddenLayers": {
+                    "type": "string",
+                    "default": "64,32,16,8,4",
+                    "description": "Comma-separated hidden layer sizes for the DNN (e.g., '128,64,32,16' or '256,128,64,32,16,8'). Output layer (2 neurons) is added automatically.",
+                    "scope": "resource"
+                },
                 "fairlint-dl.analysis.qidThreshold": {
                     "type": "number",
                     "default": 0.1,
