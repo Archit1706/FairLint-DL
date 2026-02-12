@@ -40,6 +40,8 @@ class TrainRequest(BaseModel):
     label_column: str
     sensitive_features: Optional[List[str]] = None
     num_epochs: int = 50
+    batch_size: int = 128
+    hidden_layers: Optional[List[int]] = None
 
 
 class AnalyzeRequest(BaseModel):
@@ -54,6 +56,17 @@ class SearchRequest(BaseModel):
     protected_values: Dict[str, List[float]]
     num_iterations: int = 100
     num_neighbors: int = 50
+
+
+class ActivationsRequest(BaseModel):
+    method: str = "pca"
+    max_samples: int = 500
+
+
+class ExplainRequest(BaseModel):
+    method: str = "both"  # 'lime', 'shap', or 'both'
+    num_instances: int = 10
+    max_background: int = 100
 
 
 class ColumnsRequest(BaseModel):
@@ -99,11 +112,16 @@ async def get_columns(request: ColumnsRequest):
         df_sample = pd.read_csv(request.file_path, nrows=3)
         sample_data = df_sample.to_dict('records')
 
+        # Auto-detect sensitive columns for pre-selection
+        preprocessor = DataPreprocessor()
+        detected_sensitive = preprocessor.detect_sensitive_columns(columns)
+
         return {
             "status": "success",
             "columns": columns,
             "num_columns": len(columns),
-            "sample_data": sample_data
+            "sample_data": sample_data,
+            "detected_sensitive": detected_sensitive,
         }
 
     except pd.errors.EmptyDataError:
@@ -145,6 +163,7 @@ async def train_model(request: TrainRequest):
         model = FairnessDetectorDNN(
             input_dim=data_info["input_dim"],
             protected_indices=data_info["protected_indices"],
+            hidden_layers=request.hidden_layers,
         )
 
         # Train model
@@ -313,6 +332,107 @@ async def debug_bias(request: SearchRequest):
         }
 
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/activations")
+async def get_activations(request: ActivationsRequest):
+    """Compute internal space visualization data (layer activations reduced to 2D)."""
+    global current_model, current_data_info
+
+    if current_model is None:
+        raise HTTPException(status_code=400, detail="Train model first")
+
+    try:
+        from analyzers.internal_space import InternalSpaceAnalyzer
+        import numpy as np
+
+        analyzer = InternalSpaceAnalyzer(current_model, device="cpu")
+
+        # Get test data
+        X_test, y_test = [], []
+        for batch_X, batch_y in current_data_info["test_loader"]:
+            X_test.append(batch_X)
+            y_test.append(batch_y)
+        X_test = torch.cat(X_test, dim=0)
+        y_test = torch.cat(y_test, dim=0).numpy()
+
+        # Get protected attribute values for coloring
+        protected_idx = (
+            current_data_info["protected_indices"][0]
+            if current_data_info["protected_indices"]
+            else 0
+        )
+        protected_vals = X_test[:, protected_idx].numpy()
+
+        result = analyzer.compute_visualization_data(
+            X_test,
+            y_test,
+            protected_vals,
+            method=request.method,
+            max_samples=request.max_samples,
+        )
+
+        return {"status": "success", "activations": result}
+
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/explain")
+async def explain_model(request: ExplainRequest):
+    """Compute LIME and/or SHAP explanations."""
+    global current_model, current_data_info
+
+    if current_model is None:
+        raise HTTPException(status_code=400, detail="Train model first")
+
+    try:
+        from analyzers.explainability import ExplainabilityAnalyzer
+
+        analyzer = ExplainabilityAnalyzer(
+            current_model,
+            feature_names=current_data_info["feature_names"],
+            device="cpu",
+        )
+
+        # Get train and test data as numpy
+        X_train_list, X_test_list = [], []
+        for batch_X, _ in current_data_info["train_loader"]:
+            X_train_list.append(batch_X)
+        for batch_X, _ in current_data_info["test_loader"]:
+            X_test_list.append(batch_X)
+
+        X_train = torch.cat(X_train_list, dim=0).numpy()
+        X_test = torch.cat(X_test_list, dim=0).numpy()
+
+        # Select instances to explain (first N from test set)
+        X_explain = X_test[: request.num_instances]
+
+        result = {}
+
+        if request.method in ("shap", "both"):
+            result["shap"] = analyzer.compute_shap_values(
+                X_train,
+                X_explain,
+                max_background=request.max_background,
+            )
+
+        if request.method in ("lime", "both"):
+            result["lime"] = analyzer.compute_lime_explanations(
+                X_train,
+                X_explain,
+            )
+
+        return {"status": "success", "explanations": result}
+
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
