@@ -17,15 +17,8 @@ class CausalDebugger:
         self.model.eval()
         self.device = device
 
-        # Build layers list from model
-        self.layers = [
-            self.model.layer1,
-            self.model.layer2,
-            self.model.layer3,
-            self.model.layer4,
-            self.model.layer5,
-            self.model.output_layer
-        ]
+        # Build layers list dynamically from model
+        self.layers = list(self.model.hidden_layers) + [self.model.output_layer]
 
     def localize_biased_layer(
         self, discriminatory_instances: List[Dict], accuracy_threshold: float = 0.05
