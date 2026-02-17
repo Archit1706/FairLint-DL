@@ -5,454 +5,225 @@
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-009688.svg)](https://fastapi.tiangolo.com/)
 
-**FairLint-DL** is a VS Code extension that uses deep neural networks to detect, analyze, and localize fairness defects in machine learning datasets. Inspired by Professor Tizpaz-Niari's research (DICE, NeuFair, EVT), this tool brings cutting-edge fairness testing into your development workflow.
+**FairLint-DL** is a VS Code extension designed to detect, analyze, and localize fairness defects in machine learning datasets using deep neural networks. Based on research methodologies like DICE (Distribution-Aware Input Causal Explanation) and NeuFair, this tool integrates advanced fairness testing directly into the development workflow.
 
 ---
 
-## 🎯 Key Features
+## Key Features
 
-### 🔬 Information-Theoretic Bias Detection
-- **Quantitative Individual Discrimination (QID)** metrics using Shannon and Min entropy
-- Measures protected information (in bits) leaked into model decisions
-- Detects violations of the **80% Rule** (legal threshold for disparate impact)
+### Information-Theoretic Bias Detection
 
-### 🧠 Deep Neural Network Analysis
-- **6-layer PyTorch DNN** trained as a proxy model for bias detection
-- **Neuron-level causal localization** to identify which neurons encode protected attributes
-- **Layer-wise sensitivity analysis** to pinpoint where bias originates
+-   **Quantitative Individual Discrimination (QID)**: Metrics computed using Shannon and Min entropy to quantify the protected information leaked into model decisions.
+-   **Disparate Impact Analysis**: Automatically detects violations of the 80% Rule (e.g., legal thresholds for hiring practices).
 
-### 🔎 Gradient-Guided Search
-- **Two-phase search** (global optimization + local perturbation) to discover discriminatory test cases
-- Finds maximum-QID instances that expose worst-case bias
-- Generates counterfactual examples showing discrimination
+### Deep Neural Network Analysis
 
-### 📊 Interactive Visualizations
-- Real-time Plotly charts showing:
-  - QID distribution across instances
-  - Layer-wise bias sensitivity heatmaps
-  - Top biased neurons with impact scores
-- Dark-themed WebView dashboard integrated into VS Code
+-   **Proxy Model**: Trains a configurable PyTorch DNN (Deep Neural Network) on your dataset to serve as a fairness oracle.
+-   **Causal Debugging**: Utilizes gradient-based sensitivity analysis to identify specific network layers and neurons responsible for encoding bias.
 
-### ⚡ IDE-Native Workflow
-- Right-click CSV files → "Analyze for Fairness"
-- Auto-detection of sensitive features (gender, race, age, etc.)
-- Progress notifications during DNN training and analysis
+### Gradient-Guided Discriminatory Search
+
+-   **Two-Phase Search Algorithm**:
+    1.  **Global Search**: Uses gradient ascent to find regions of the input space with high discrimination (maximum QID).
+    2.  **Local Search**: Performs perturbation around high-risk instances to generate concrete discriminatory test cases.
+
+### Interactive Visualization
+
+-   Real-time charts showing QID distribution, disparate impact, and layer sensitivity.
+-   Deep integration with VS Code's Webview API for a seamless dashboard experience.
 
 ---
 
-## 🏗️ Architecture
+## Technical Architecture
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                   VS Code Extension                      │
-│  (TypeScript + WebView Dashboard)                       │
-└────────────────┬────────────────────────────────────────┘
-                 │ HTTP/REST API
-                 ▼
-┌─────────────────────────────────────────────────────────┐
-│              FastAPI Backend Server                      │
-│         (Python + PyTorch + uvicorn)                    │
-├─────────────────────────────────────────────────────────┤
-│  ┌──────────────────┐  ┌─────────────────────┐         │
-│  │ FairnessDetectorDNN│  │   DataPreprocessor │         │
-│  │  (6-layer PyTorch) │  │ (CSV → Tensors)    │         │
-│  └──────────────────┘  └─────────────────────┘         │
-│                                                          │
-│  ┌──────────────────┐  ┌─────────────────────┐         │
-│  │   QIDAnalyzer    │  │DiscriminatorySearch │         │
-│  │ (Shannon/Min QID)│  │ (Gradient Ascent)   │         │
-│  └──────────────────┘  └─────────────────────┘         │
-│                                                          │
-│  ┌──────────────────────────────────────────┐          │
-│  │       CausalDebugger                      │          │
-│  │  (Layer/Neuron Localization)             │          │
-│  └──────────────────────────────────────────┘          │
-└─────────────────────────────────────────────────────────┘
-```
+The system operates as a client-server architecture:
+
+1.  **VS Code Extension (Client)**: Written in TypeScript. It handles UI interactions, file system access, and manages the lifecycle of the Python backend.
+2.  **Analysis Server (Backend)**: A FastAPI server running locally. It hosts the PyTorch models and analysis algorithms.
+
+### Communication Flow
+
+1.  User triggers analysis on a CSV file.
+2.  Extension spawns the Python server (`python -m uvicorn bias_server:app`).
+3.  Extension sends dataset path and configuration to the server via REST API.
+4.  Server performs training and analysis, returning JSON results.
+5.  Extension renders results in an interactive Webview.
 
 ---
 
-## 📦 Installation
+## Detailed Technical Implementation
+
+### 1. Fairness Detector DNN
+
+The core component is a feedforward neural network (`FairnessDetectorDNN`) implemented in PyTorch. By default, it uses a 6-layer architecture designed to capture complex, non-linear dependencies between features:
+
+-   **Input Layer**: Matches dataset feature dimension.
+-   **Hidden Layers**: Configurable sizes (default: 64 -> 32 -> 16 -> 8 -> 4).
+-   **Regularization**: Uses BatchNorm, ReLU activation, and Dropout (0.2) to prevent overfitting.
+-   **Output**: Binary classification logits.
+
+### 2. QID Computation (`qid_analyzer.py`)
+
+QID measures the causal influence of protected attributes on the model's prediction.
+
+#### Shannon Entropy QID
+
+Quantifies the uncertainty in prediction introduced by varying protected attributes $A$ while keeping other attributes $X$ constant.
+
+$$ QID(x) = H(Y | X) $$
+
+Computed by:
+
+1.  Generating counterfactuals $x'$ by modifying protected attributes of $x$.
+2.  Computing predictions $P(Y|x')$ for all counterfactuals.
+3.  Calculating the entropy of the _average_ prediction distribution.
+4.  **Interpretation**: 0 bits implies perfect fairness; >1 bit indicates significant bias.
+
+#### Min Entropy QID
+
+Used for worst-case analysis (connected to Extreme Value Theory). It focuses on the maximum probability of the most likely outcome across counterfactuals.
+
+### 3. Discriminatory Instance Search (`search.py`)
+
+Finding individual instances of discrimination is treated as an optimization problem.
+
+#### Phase 1: Global Search (Gradient Ascent)
+
+The algorithm maximizes the QID score directly.
+
+-   **Objective**: Maximize variance of predictions across counterfactuals.
+-   **Method**: Backpropagates the gradient of the QID loss with respect to the input features $x$.
+-   **Result**: Finds an input $x_{global}$ that maximizes discrimination potential.
+
+#### Phase 2: Local Search (Perturbation)
+
+Explores the neighborhood of $x_{global}$ to find concrete discriminatory instances.
+
+-   Adds Gaussian noise to non-protected features.
+-   Filters neighbors that exceed the QID threshold (>0.1 bits).
+
+### 4. Causal Debugging (`causal_debugger.py`)
+
+Once bias is detected, the tool localizes it to specific model components.
+
+#### Layer Localization
+
+Determines which layer is most sensitive to discriminatory inputs.
+
+-   Computes the gradient of layer activations $L_i(x)$ with respect to the input $x$.
+-   Aggregates the magnitude of these gradients for known discriminatory instances.
+-   **Sensitivity Score**: High gradient magnitude indicates the layer significantly amplifies bias.
+
+#### Neuron Localization
+
+Identifies individual neurons encoding protected information.
+
+-   analyzes activation magnitudes of neurons in the biased layer.
+-   Neurons with consistently high activations on discriminatory inputs are flagged as "biased neurons."
+
+---
+
+## Installation
 
 ### Prerequisites
-- **VS Code** 1.78.0 or higher
-- **Python** 3.9 or higher
-- **Node.js** 16.x or higher (for building the extension)
 
-### Step 1: Install Python Dependencies
+-   **VS Code** 1.78.0 or higher
+-   **Python** 3.9+ with `pip`
+-   **Node.js** 16.x+ (for building from source)
 
-```bash
-cd python_backend
-pip install -r requirements.txt
+### Setup Steps
+
+1.  **Install Python Dependencies**:
+
+    ```bash
+    cd python_backend
+    pip install -r requirements.txt
+    ```
+
+    _Dependencies: PyTorch, FastAPI, Uvicorn, Pandas, Scikit-learn, SciPy._
+
+2.  **Install Node Dependencies**:
+
+    ```bash
+    npm install
+    ```
+
+3.  **Build Extension**:
+
+    ```bash
+    npm run compile
+    ```
+
+4.  **Run in Debug Mode**:
+    Press `F5` in VS Code to launch the Extension Development Host.
+
+---
+
+## Usage Guide
+
+1.  **Open Dataset**: Open a CSV file in VS Code.
+2.  **Start Analysis**: Right-click the file and select **"Fairness: Analyze This Dataset"**.
+3.  **Configure**:
+    -   Select the **Label Column** (target variable).
+    -   Select **Protected Attributes** (e.g., gender, race - often auto-detected).
+    -   Choose **Model Architecture** (Default, Wide, Deep).
+4.  **Review Results**:
+    -   **Metrics**: View Mean QID and Disparate Impact.
+    -   **Visualization**: Explore the 3D interaction charts and heatmaps.
+    -   **Updates**: Tracking progress via the status bar.
+
+---
+
+## Project Structure
+
 ```
-
-**Dependencies include:**
-- PyTorch 2.0+
-- FastAPI + Uvicorn
-- pandas, numpy, scikit-learn
-- scipy (for entropy calculations)
-
-### Step 2: Install Node Dependencies
-
-```bash
-npm install
-```
-
-### Step 3: Build the Extension
-
-```bash
-npm run compile
-```
-
-### Step 4: Package as VSIX (Optional)
-
-```bash
-npm run vsce-package
-```
-
-Then install:
-```bash
-code --install-extension fairlint-dl.vsix
+fairlint-dl/
+├── .vscode/               # VS Code launch configurations
+├── python_backend/        # Analysis Server
+│   ├── analyzers/         # Core Algorithmic Logic
+│   │   ├── causal_debugger.py    # Layer/Neuron attribution
+│   │   ├── qid_analyzer.py       # Entropy-based metrics
+│   │   └── search.py             # Gradient-guided search
+│   ├── models/            # PyTorch Model Definitions
+│   │   └── fairness_dnn.py
+│   ├── utils/             # Data Processing
+│   │   └── data_loader.py
+│   ├── bias_server.py     # FastAPI Entry Point
+│   └── requirements.txt   # Python Dependencies
+├── src/                   # VS Code Extension Source
+│   └── extension.ts       # Main Extension Entry Point
+├── package.json           # Extension Manifest
+└── README.md              # Documentation
 ```
 
 ---
 
-## 🚀 Usage
+## API Reference (Local Server)
 
-### Quick Start
+When the extension runs, it starts a local server at `http://localhost:8765`.
 
-1. **Open a CSV dataset** in VS Code (e.g., Adult Census, COMPAS, German Credit)
-
-2. **Right-click the file** in Explorer → Select **"Fairness: Analyze This Dataset"**
-
-3. **Enter the label column name** (e.g., `income`, `label`, `target`)
-
-4. **Wait for analysis** (2-5 minutes):
-   - 🟡 Training DNN...
-   - 🟡 Computing QID metrics...
-   - 🟡 Searching for discriminatory instances...
-   - 🟡 Localizing biased layers and neurons...
-
-5. **View results** in interactive dashboard:
-   - QID metrics (mean, max, % discriminatory)
-   - Disparate impact ratios
-   - Layer sensitivity charts
-   - Neuron impact scores
-
-### Example: Adult Census Dataset
-
-```bash
-# Download dataset
-wget https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data -O adult.csv
-
-# Open in VS Code, right-click → "Analyze for Fairness"
-# Label column: "income"
-```
-
-**Expected Results:**
-- Mean QID: ~4.05 bits
-- Disparate Impact: Often violates 80% rule
-- Biased Layer: Typically Layer 2 or 3
-- Protected Features: Auto-detected (sex, age, race)
+-   `POST /train`: Trains the proxy model on the provided CSV.
+-   `POST /analyze`: Computes bulk QID metrics for the dataset.
+-   `POST /search`: Runs the global/local search for discriminatory instances.
+-   `POST /debug`: Performs layer and neuron sensitivity analysis.
+-   `POST /activations`: Returns data for internal representation visualization.
+-   `POST /explain`: Generates SHAP/LIME explanations (if enabled).
 
 ---
 
-## 🧪 Technical Details
+## License
 
-### 1. Fairness Detector DNN Architecture
-
-**6-layer feedforward network** (DICE paper architecture):
-
-```
-Input (n_features)
-  → Dense(64) → BatchNorm → ReLU → Dropout(0.2)
-  → Dense(32) → BatchNorm → ReLU → Dropout(0.2)
-  → Dense(16) → BatchNorm → ReLU → Dropout(0.2)
-  → Dense(8)  → BatchNorm → ReLU → Dropout(0.2)
-  → Dense(4)  → BatchNorm → ReLU → Dropout(0.2)
-  → Dense(2)  [Output logits]
-```
-
-**Training:**
-- Loss: Cross-Entropy
-- Optimizer: Adam (lr=0.001)
-- Epochs: 50 (with early stopping)
-- Batch size: 128
-
-### 2. QID Computation
-
-**Shannon Entropy QID:**
-```
-QID = H(Y | X_nonprotected) - H(Y | X_all)
-```
-
-Where:
-- H = Shannon entropy
-- Y = model output
-- X_all = all features
-- X_nonprotected = features excluding protected attributes
-
-**Interpretation:**
-- **0 bits**: Perfectly fair (no protected info used)
-- **>1 bit**: Significant bias detected
-- **>2 bits**: Severe discrimination
-
-**Min Entropy QID:**
-```
-QID_min = -log(max P(y|x))
-```
-
-Used for worst-case (extreme value) analysis.
-
-### 3. Discriminatory Instance Search
-
-**Global Phase (Gradient Ascent):**
-```python
-# Maximize QID via gradient ascent
-for iteration in range(100):
-    qid_loss = -variance(counterfactual_outputs)
-    qid_loss.backward()
-    optimizer.step()
-```
-
-**Local Phase (Perturbation):**
-```python
-# Generate neighbors via Gaussian noise
-for _ in range(50):
-    x_neighbor = x_base + noise * 0.1
-    if QID(x_neighbor) > threshold:
-        save_instance(x_neighbor)
-```
-
-### 4. Causal Debugging
-
-**Layer Localization:**
-- Compute gradient sensitivity: ∂activations/∂input
-- Layer with highest sensitivity = most biased
-
-**Neuron Localization:**
-- For each neuron, measure activation magnitude on discriminatory instances
-- Top-k neurons with highest activations encode protected info
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
 ---
 
-## 📊 Benchmark Datasets
+## Citation
 
-Tested on standard fairness benchmarks:
+If you use this tool for research, please cite the original DICE paper:
 
-| Dataset | Size | Protected Attrs | Expected QID | 80% Rule |
-|---------|------|----------------|--------------|----------|
-| Adult Census | 48K | Sex, Race, Age | 4.05 bits | ❌ Violates |
-| COMPAS | 7K | Race, Sex, Age | 5.12 bits | ❌ Violates |
-| German Credit | 1K | Sex, Age | 3.2 bits | ⚠️ Borderline |
-| Bank Marketing | 45K | Age, Marital | 2.8 bits | ✅ Passes |
+> _Information-Theoretic Testing and Debugging of Fairness Defects in Deep Neural Networks_
+> Saeid Tizpaz-Niari et al.
 
 ---
 
-## 🔧 API Reference
-
-### FastAPI Endpoints
-
-**POST /train**
-- Trains the FairnessDetectorDNN on dataset
-- Returns: Model accuracy, protected features
-
-**POST /analyze**
-- Computes QID metrics for dataset instances
-- Returns: Mean/max QID, disparate impact ratios
-
-**POST /search**
-- Runs gradient-guided search for discriminatory instances
-- Returns: Best QID, list of discriminatory instances
-
-**POST /debug**
-- Performs causal layer and neuron localization
-- Returns: Layer sensitivity, top biased neurons
-
-### Python API
-
-```python
-from models.fairness_dnn import FairnessDetectorDNN, DNNTrainer
-from analyzers.qid_analyzer import QIDAnalyzer
-from analyzers.search import DiscriminatoryInstanceSearch
-from analyzers.causal_debugger import CausalDebugger
-
-# Train model
-model = FairnessDetectorDNN(input_dim=14, protected_indices=[0, 1])
-trainer = DNNTrainer(model)
-trainer.train(train_loader, val_loader, num_epochs=50)
-
-# Analyze bias
-analyzer = QIDAnalyzer(model, protected_indices=[0, 1])
-qid_result = analyzer.compute_shannon_qid(x_instance, protected_values=[0.0, 1.0])
-print(f"QID: {qid_result['qid_bits']:.4f} bits")
-
-# Search for discriminatory instances
-search = DiscriminatoryInstanceSearch(model, analyzer, [0, 1])
-results = search.search(X_test, protected_values=[0.0, 1.0])
-
-# Causal debugging
-debugger = CausalDebugger(model)
-layer_analysis = debugger.localize_biased_layer(results['discriminatory_instances'])
-neuron_analysis = debugger.localize_biased_neurons(layer_idx=2, ...)
-```
-
----
-
-## 🎓 Research Background
-
-This tool implements methodologies from:
-
-### DICE (Information-Theoretic Testing)
-**Paper:** *"Information-Theoretic Testing and Debugging of Fairness Defects in Deep Neural Networks"*
-**Authors:** Saeid Tizpaz-Niari et al.
-
-**Key Contributions:**
-- QID metrics using Shannon/Min entropy
-- Two-phase search (global + local)
-- Layer-wise causal debugging
-
-### NeuFair (Neuron-Level Repair)
-**Paper:** *"Neural Network Fairness Repair with Dropout"*
-
-**Key Contributions:**
-- Neuron state vector interventions
-- Dropout-based bias mitigation
-- Neuron deactivation recommendations
-
-### EVT (Extreme Value Theory)
-**Paper:** *"Fairness Testing through Extreme Value Theory"*
-
-**Key Contributions:**
-- Worst-case discrimination analysis
-- GEV distribution fitting
-- Return level computation
-
----
-
-## 🛠️ Development
-
-### Project Structure
-
-```
-bias-fairness-dl-extension-test/
-├── python_backend/
-│   ├── models/
-│   │   └── fairness_dnn.py       # 6-layer PyTorch DNN
-│   ├── analyzers/
-│   │   ├── qid_analyzer.py       # Shannon/Min entropy QID
-│   │   ├── search.py             # Gradient-guided search
-│   │   └── causal_debugger.py    # Layer/neuron localization
-│   ├── utils/
-│   │   └── data_loader.py        # CSV preprocessing
-│   ├── bias_server.py            # FastAPI server
-│   └── requirements.txt
-├── src/
-│   └── extension.ts              # VS Code extension
-├── package.json
-└── README.md
-```
-
-### Running Tests
-
-**Backend tests:**
-```bash
-cd python_backend
-python -m pytest tests/
-```
-
-**Test individual modules:**
-```bash
-python models/fairness_dnn.py       # Test DNN
-python analyzers/qid_analyzer.py    # Test QID
-python analyzers/search.py          # Test search
-python analyzers/causal_debugger.py # Test debugger
-```
-
-### Debug Mode
-
-1. Press **F5** in VS Code to launch Extension Development Host
-2. Backend server logs appear in Debug Console
-3. Check `http://localhost:8765/docs` for FastAPI Swagger UI
-
----
-
-## 📈 Performance
-
-**Training Time:**
-- Adult (48K rows): ~2-3 minutes
-- COMPAS (7K rows): ~30 seconds
-- German Credit (1K rows): ~15 seconds
-
-**Analysis Time:**
-- QID computation (1000 samples): ~30 seconds
-- Search (100 iterations): ~1 minute
-- Causal debugging: ~20 seconds
-
-**Hardware:**
-- CPU: Intel i7 or equivalent
-- RAM: 8GB minimum
-- GPU: Optional (enables 3-5x speedup)
-
----
-
-## 🤝 Contributing
-
-Contributions welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
----
-
-## 📝 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-## 🙏 Acknowledgments
-
-- **Professor Saeid Tizpaz-Niari** for DICE, NeuFair, and EVT research
-- **PyTorch Team** for the deep learning framework
-- **FastAPI** for the high-performance backend
-- **Microsoft** for VS Code Extension API
-
----
-
-## 📚 Citation
-
-If you use this tool in research, please cite:
-
-```bibtex
-@software{fairlint_dl_2024,
-  title={FairLint-DL: Deep Learning-Based Fairness Debugger for VS Code},
-  author={[Your Name]},
-  year={2024},
-  url={https://github.com/Archit1706/bias-fairness-dl-extension}
-}
-```
-
----
-
-## 🔗 Related Work
-
-- [DICE Repository](https://github.com/...): Original DICE implementation
-- [Fairlearn](https://fairlearn.org/): Microsoft's fairness toolkit
-- [AI Fairness 360](https://aif360.mybluemix.net/): IBM's fairness library
-- [What-If Tool](https://pair-code.github.io/what-if-tool/): Google's model debugging tool
-
----
-
-## 📧 Contact
-
-For questions, issues, or collaboration:
-- **GitHub Issues**: [Report bugs](https://github.com/Archit1706/bias-fairness-dl-extension/issues)
-- **Email**: archit@example.com
-
----
-
-**Made with ❤️ for responsible AI development**
+**FairLint-DL** - Ensuring Fairness in AI, One Line of Code at a Time.
