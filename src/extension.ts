@@ -669,6 +669,7 @@ async function runAnalysis(filePath: string, labelColumn: string, protectedFeatu
                     explanations: explainResponse.data.explanations,
                     metadata: {
                         file: fileName,
+                        filePath: filePath,
                         labelColumn: labelColumn,
                         totalTime: totalTime,
                     },
@@ -696,10 +697,66 @@ function showResults(results: any) {
         'fairnessResults',
         'Fairness Analysis Results',
         vscode.ViewColumn.One,
-        { enableScripts: true },
+        {
+            enableScripts: true,
+            retainContextWhenHidden: true,
+        },
     );
 
-    panel.webview.html = getWebviewHtml(results);
+    const html = getWebviewHtml(results);
+    panel.webview.html = html;
+
+    // Handle messages from the webview (for export)
+    panel.webview.onDidReceiveMessage(async (message) => {
+        if (message.command === 'saveJson') {
+            const baseFileName = results.metadata?.file?.replace('.csv', '') || 'fairness-report';
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            const defaultDir = results.metadata?.filePath
+                ? path.dirname(results.metadata.filePath)
+                : vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+            const defaultName = `${baseFileName}_data_${timestamp}.json`;
+            const defaultUri = defaultDir
+                ? vscode.Uri.file(path.join(defaultDir, defaultName))
+                : undefined;
+
+            const uri = await vscode.window.showSaveDialog({
+                defaultUri,
+                filters: { 'JSON Files': ['json'], 'All Files': ['*'] },
+                title: 'Save Analysis Data (JSON)',
+            });
+
+            if (uri) {
+                try {
+                    const exportData = {
+                        generated_at: new Date().toISOString(),
+                        metadata: results.metadata,
+                        training: {
+                            accuracy: results.training.accuracy,
+                            num_parameters: results.training.num_parameters,
+                            protected_features: results.training.protected_features,
+                        },
+                        qid_metrics: results.analysis.qid_metrics,
+                        search_results: {
+                            best_qid: results.search.search_results.best_qid,
+                            num_found: results.search.search_results.num_found,
+                        },
+                        layer_analysis: results.debug?.layer_analysis,
+                        neuron_analysis: results.debug?.neuron_analysis,
+                        explanations: {
+                            shap_global_importance: results.explanations?.shap?.global_importance,
+                            shap_feature_names: results.explanations?.shap?.feature_names,
+                            lime_aggregated_importance: results.explanations?.lime?.aggregated_importance,
+                            lime_feature_names: results.explanations?.lime?.feature_names,
+                        },
+                    };
+                    fs.writeFileSync(uri.fsPath, JSON.stringify(exportData, null, 2), 'utf-8');
+                    vscode.window.showInformationMessage(`Data exported to ${path.basename(uri.fsPath)}`);
+                } catch (err: any) {
+                    vscode.window.showErrorMessage(`Failed to export data: ${err.message}`);
+                }
+            }
+        }
+    });
 }
 
 function getWebviewHtml(results: any): string {
@@ -721,6 +778,19 @@ function getWebviewHtml(results: any): string {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+        // VS Code API - must be acquired before any other scripts
+        var _vscodeApi = (function() { try { return acquireVsCodeApi(); } catch(e) { return null; } })();
+
+        function downloadJson() {
+            if (!_vscodeApi) return;
+            try {
+                _vscodeApi.postMessage({ command: 'saveJson' });
+            } catch (e) {
+                console.error('Download JSON error:', e);
+            }
+        }
+    </script>
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <style>
         :root {
@@ -1072,6 +1142,41 @@ function getWebviewHtml(results: any): string {
             color: var(--text-secondary);
         }
 
+        /* Export Buttons */
+        .export-toolbar {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-top: 12px;
+        }
+
+        .export-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--card-bg);
+            color: var(--text-secondary);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-family: inherit;
+        }
+
+        .export-btn:hover {
+            background: var(--accent-blue);
+            color: #fff;
+            border-color: var(--accent-blue);
+            transform: translateY(-1px);
+        }
+
+        .export-btn svg {
+            flex-shrink: 0;
+        }
+
         /* Animations */
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(10px); }
@@ -1086,6 +1191,7 @@ function getWebviewHtml(results: any): string {
         .section:nth-child(3) { animation-delay: 0.2s; }
         .section:nth-child(4) { animation-delay: 0.3s; }
         .section:nth-child(5) { animation-delay: 0.4s; }
+
     </style>
 </head>
 <body>
@@ -1106,6 +1212,12 @@ function getWebviewHtml(results: any): string {
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm0 14A6 6 0 1 1 8 2a6 6 0 0 1 0 12zM7 4h2v5H7V4zm0 6h2v2H7v-2z"/></svg>
                     ${metadata?.totalTime || 0}s analysis time
                 </span>
+            </div>
+            <div class="export-toolbar">
+                <button class="export-btn" onclick="downloadJson()" title="Download raw analysis data as JSON">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M5 0C3.9 0 3 .9 3 2v12c0 1.1.9 2 2 2h6c1.1 0 2-.9 2-2V6l-5-6H5zm0 1h3v4h4v9H5V1zm4 0l3 3H9V1z"/></svg>
+                    Export JSON
+                </button>
             </div>
         </div>
         <div class="score-card">
