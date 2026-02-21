@@ -2,17 +2,9 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { getWebviewHtml } from './htmlBuilder';
+import { AnalysisResults } from './types';
 
-export function showResults(results: {
-    training: { accuracy: number; protected_features: string[]; num_parameters: number };
-    analysis: { qid_metrics: Record<string, number> };
-    search: { search_results: { discriminatory_instances: unknown[]; best_qid: number; num_found: number } };
-    debug?: { layer_analysis: Record<string, unknown>; neuron_analysis: unknown[] };
-    activations?: Record<string, unknown>;
-    explanations?: { shap?: Record<string, unknown>; lime?: Record<string, unknown> };
-    metadata?: { file?: string; filePath?: string; labelColumn?: string; totalTime?: number };
-    config?: Record<string, unknown>;
-}): void {
+export function showResults(results: AnalysisResults): void {
     const panel = vscode.window.createWebviewPanel(
         'fairnessResults',
         'Fairness Analysis Results',
@@ -29,14 +21,7 @@ export function showResults(results: {
     });
 }
 
-async function handleSaveJson(results: {
-    training: { accuracy: number; protected_features: string[]; num_parameters: number };
-    analysis: { qid_metrics: Record<string, number> };
-    search: { search_results: { best_qid: number; num_found: number } };
-    debug?: { layer_analysis: Record<string, unknown>; neuron_analysis: unknown[] };
-    explanations?: { shap?: Record<string, unknown>; lime?: Record<string, unknown> };
-    metadata?: { file?: string; filePath?: string };
-}): Promise<void> {
+async function handleSaveJson(results: AnalysisResults): Promise<void> {
     const baseFileName = results.metadata?.file?.replace('.csv', '') || 'fairness-report';
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const defaultDir = results.metadata?.filePath
@@ -60,6 +45,9 @@ async function handleSaveJson(results: {
                     accuracy: results.training.accuracy,
                     num_parameters: results.training.num_parameters,
                     protected_features: results.training.protected_features,
+                    hidden_layers: results.training.hidden_layers,
+                    dataset_info: results.training.dataset_info,
+                    training_history: results.training.training_history,
                 },
                 qid_metrics: results.analysis.qid_metrics,
                 search_results: {
@@ -69,10 +57,10 @@ async function handleSaveJson(results: {
                 layer_analysis: results.debug?.layer_analysis,
                 neuron_analysis: results.debug?.neuron_analysis,
                 explanations: {
-                    shap_global_importance: (results.explanations?.shap as Record<string, unknown>)?.global_importance,
-                    shap_feature_names: (results.explanations?.shap as Record<string, unknown>)?.feature_names,
-                    lime_aggregated_importance: (results.explanations?.lime as Record<string, unknown>)?.aggregated_importance,
-                    lime_feature_names: (results.explanations?.lime as Record<string, unknown>)?.feature_names,
+                    shap_global_importance: results.explanations?.shap?.global_importance,
+                    shap_feature_names: results.explanations?.shap?.feature_names,
+                    lime_aggregated_importance: results.explanations?.lime?.aggregated_importance,
+                    lime_feature_names: results.explanations?.lime?.feature_names,
                 },
             };
             fs.writeFileSync(uri.fsPath, JSON.stringify(exportData, null, 2), 'utf-8');
