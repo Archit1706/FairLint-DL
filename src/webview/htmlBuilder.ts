@@ -2,34 +2,30 @@ import { getStyles } from './styles';
 import { ICONS } from './icons';
 import { calculateFairnessScore, getFairnessStatus } from './scoring';
 import { getChartsScript } from './charts';
+import {
+    AnalysisResults,
+    TrainingData,
+    QidMetrics,
+    SearchResults,
+    LayerAnalysis,
+    NeuronAnalysis,
+    ShapData,
+    LimeData,
+    ActivationsData,
+    AnalysisMetadata,
+} from './types';
 
-export function getWebviewHtml(results: {
-    training: { accuracy: number; protected_features: string[]; num_parameters: number };
-    analysis: { qid_metrics: Record<string, number> };
-    search: { search_results: { discriminatory_instances: unknown[]; best_qid: number; num_found: number } };
-    debug?: { layer_analysis: Record<string, unknown>; neuron_analysis: unknown[] };
-    activations?: Record<string, unknown>;
-    explanations?: { shap?: Record<string, unknown>; lime?: Record<string, unknown> };
-    metadata?: { file?: string; labelColumn?: string; totalTime?: number };
-}): string {
-    const qidMetrics = results.analysis.qid_metrics as Record<string, number>;
-    const searchResults = results.search.search_results as {
-        discriminatory_instances: unknown[];
-        best_qid: number;
-        num_found: number;
-    };
-    const layerAnalysis = results.debug?.layer_analysis as {
-        biased_layer: { sensitivity: number; layer_name: string; neuron_count: number };
-        all_layers: unknown[];
-    } | null;
-    const neuronAnalysis = (results.debug?.neuron_analysis as { neuron_idx: number; impact_score: number }[]) || null;
-    const activationsData = results.activations || null;
-    const explanationsData = (results.explanations as { shap?: Record<string, unknown>; lime?: Record<string, unknown> }) || null;
+export function getWebviewHtml(results: AnalysisResults): string {
+    const qidMetrics = results.analysis.qid_metrics;
+    const searchResults = results.search.search_results;
+    const layerAnalysis = (results.debug?.layer_analysis as LayerAnalysis) || null;
+    const neuronAnalysis = (results.debug?.neuron_analysis as NeuronAnalysis[]) || null;
+    const activationsData = (results.activations as ActivationsData) || null;
+    const explanationsData = results.explanations || null;
     const metadata = results.metadata;
+    const training = results.training;
 
-    const fairnessScore = calculateFairnessScore(qidMetrics as {
-        mean_qid: number; max_qid: number; pct_discriminatory: number; mean_disparate_impact: number;
-    });
+    const fairnessScore = calculateFairnessScore(qidMetrics);
     const fairnessStatus = getFairnessStatus(fairnessScore);
 
     const headScript = `
@@ -41,14 +37,7 @@ export function getWebviewHtml(results: {
         }
     </script>`;
 
-    const chartsScript = getChartsScript(
-        searchResults,
-        qidMetrics as { mean_disparate_impact: number },
-        layerAnalysis,
-        neuronAnalysis,
-        activationsData,
-        explanationsData as { shap: unknown | null; lime: unknown | null } | null,
-    );
+    const chartsScript = getChartsScript(searchResults, qidMetrics, layerAnalysis, neuronAnalysis, activationsData, explanationsData);
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -61,21 +50,21 @@ export function getWebviewHtml(results: {
 </head>
 <body>
     ${buildHeader(metadata, fairnessScore, fairnessStatus)}
-    ${buildTrainingSection(results.training)}
+    ${buildPipelineOverview(training, metadata, qidMetrics, searchResults)}
+    ${buildTrainingSection(training)}
     ${buildActivationsSection(activationsData)}
-    ${buildQidSection(qidMetrics)}
-    ${buildSearchSection(searchResults)}
-    ${buildLayerSection(layerAnalysis, neuronAnalysis)}
-    ${buildShapSection(explanationsData)}
-    ${buildLimeSection(explanationsData)}
-    ${buildInterpretationSection()}
+    ${buildQidSection(qidMetrics, metadata)}
+    ${buildSearchSection(searchResults, qidMetrics)}
+    ${buildLayerSection(layerAnalysis, neuronAnalysis, training)}
+    ${buildShapSection(explanationsData?.shap as ShapData | null, training)}
+    ${buildLimeSection(explanationsData?.lime as LimeData | null, training)}
     ${chartsScript}
 </body>
 </html>`;
 }
 
 function buildHeader(
-    metadata: { file?: string; labelColumn?: string; totalTime?: number } | undefined,
+    metadata: AnalysisMetadata | undefined,
     fairnessScore: number,
     fairnessStatus: { label: string; class: string; color: string },
 ): string {
@@ -102,7 +91,104 @@ function buildHeader(
     </div>`;
 }
 
-function buildTrainingSection(training: { accuracy: number; protected_features: string[]; num_parameters: number }): string {
+function buildPipelineOverview(
+    training: TrainingData,
+    metadata: AnalysisMetadata | undefined,
+    qidMetrics: QidMetrics,
+    searchResults: SearchResults,
+): string {
+    const ds = training.dataset_info;
+    const hist = training.training_history;
+    const timings = metadata?.stepTimings || {};
+
+    // Class distribution text
+    let classDistText = '';
+    if (ds?.class_distribution) {
+        const entries = Object.entries(ds.class_distribution);
+        const total = entries.reduce((sum, [, count]) => sum + count, 0);
+        classDistText = entries
+            .map(([cls, count]) => `Class ${cls}: ${count} (${((count / total) * 100).toFixed(1)}%)`)
+            .join(', ');
+    }
+
+    // Protected attributes info
+    const protectedAttrs = metadata?.protectedFeatures || training.protected_features;
+    const protectedAttrInfo = ds?.protected_attr_info || {};
+
+    return `
+    <div class="section">
+        <div class="section-header">
+            <div class="section-icon" style="background: rgba(79, 195, 247, 0.2); color: var(--accent-blue);">
+                ${ICONS.info}
+            </div>
+            <h2 class="section-title">Analysis Pipeline Overview</h2>
+        </div>
+
+        <div class="interpretation-box" style="margin-bottom: 16px;">
+            <div class="interpretation-title">${ICONS.file} Dataset Summary</div>
+            <div class="interpretation-content">
+                Analyzed <strong>${metadata?.file || 'dataset'}</strong> with
+                <strong>${ds?.num_total || 'N/A'} total instances</strong> and
+                <strong>${ds?.num_features || 'N/A'} features</strong>.
+                The target variable is <strong>"${metadata?.labelColumn || 'N/A'}"</strong>.
+                ${classDistText ? `<br>Class distribution: <strong>${classDistText}</strong>.` : ''}
+                ${ds?.num_total ? `<br>Data split: ${ds.num_train} training, ${ds.num_val} validation, ${ds.num_test} test instances.` : ''}
+            </div>
+        </div>
+
+        <div class="interpretation-box" style="margin-bottom: 16px;">
+            <div class="interpretation-title">${ICONS.layers} Protected Attributes</div>
+            <div class="interpretation-content">
+                ${protectedAttrs.length} protected attribute${protectedAttrs.length !== 1 ? 's' : ''} selected for fairness analysis:
+                <strong>${protectedAttrs.join(', ')}</strong>.
+                ${protectedAttrs.map((attr) => {
+                    const info = protectedAttrInfo[attr];
+                    return `<br>&bull; <strong>${attr}</strong> (feature index ${info?.index ?? 'N/A'}):
+                        The analysis tests whether changing this attribute's value (e.g., from one group to another)
+                        causes different model predictions, indicating potential discrimination.`;
+                }).join('')}
+                <br><br>During QID analysis, the model's behavior is compared when protected attribute values are set to
+                <strong>0.0</strong> (normalized baseline group) vs <strong>1.0</strong> (normalized comparison group).
+                The difference in predictions reveals how much the model relies on these attributes.
+            </div>
+        </div>
+
+        <div class="interpretation-box" style="margin-bottom: 16px;">
+            <div class="interpretation-title">${ICONS.barChart} What Happened During Analysis</div>
+            <div class="interpretation-content">
+                The 6-step analysis pipeline was executed as follows:
+                <br><br>
+                <strong>Step 1 - Model Training</strong> (${timings.training || '?'}s):
+                A deep neural network with architecture [${(metadata?.hiddenLayers || training.hidden_layers || []).join(' &rarr; ')} &rarr; 2]
+                was trained for <strong>${hist?.epochs_trained || metadata?.epochs || '?'} epochs</strong>.
+                Final accuracy: <strong>${training.accuracy.toFixed(1)}%</strong>
+                (train loss: ${hist?.final_train_loss?.toFixed(4) || 'N/A'}, val loss: ${hist?.final_val_loss?.toFixed(4) || 'N/A'}).
+                <br><br>
+                <strong>Step 2 - Internal Space Visualization</strong> (${timings.activations || '?'}s):
+                Extracted activations from each hidden layer and projected them to 2D using PCA for
+                <strong>${metadata?.maxSamples || 'N/A'}</strong> test instances.
+                <br><br>
+                <strong>Step 3 - QID Fairness Analysis</strong> (${timings.qidAnalysis || '?'}s):
+                Computed Quantitative Individual Discrimination (QID) for <strong>${qidMetrics.num_analyzed || metadata?.maxSamples || 'N/A'}</strong> instances
+                by measuring how many bits of protected information the model uses in its decisions.
+                <br><br>
+                <strong>Step 4 - Discriminatory Instance Search</strong> (${timings.search || '?'}s):
+                Ran ${metadata?.globalIterations || 'N/A'} global iterations + ${metadata?.localNeighbors || 'N/A'} local neighbors
+                to generate <strong>${searchResults.num_found} discriminatory test cases</strong> with best QID = ${searchResults.best_qid.toFixed(4)} bits.
+                <br><br>
+                <strong>Step 5 - Causal Debugging</strong> (${timings.debug || '?'}s):
+                Localized bias to specific layers and neurons using causal intervention analysis.
+                <br><br>
+                <strong>Step 6 - LIME &amp; SHAP Explanations</strong> (${timings.explain || '?'}s):
+                Computed feature importance for <strong>${metadata?.numExplainInstances || 10} instances</strong>
+                using SHAP (Shapley values in log-odds space) and LIME (local linear approximation).
+            </div>
+        </div>
+    </div>`;
+}
+
+function buildTrainingSection(training: TrainingData): string {
+    const hist = training.training_history;
     return `
     <div class="section">
         <div class="section-header">
@@ -140,15 +226,25 @@ function buildTrainingSection(training: { accuracy: number; protected_features: 
                 <div class="card-value">${(training.num_parameters / 1000).toFixed(1)}<span class="card-unit">K params</span></div>
                 <div class="card-description">Total trainable parameters</div>
             </div>
+            ${hist ? `
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-label">Training Summary</span>
+                </div>
+                <div class="card-value">${hist.epochs_trained}<span class="card-unit">epochs</span></div>
+                <div class="card-description">
+                    Train acc: ${hist.final_train_acc.toFixed(1)}% | Val acc: ${hist.final_val_acc.toFixed(1)}%<br>
+                    Train loss: ${hist.final_train_loss.toFixed(4)} | Val loss: ${hist.final_val_loss.toFixed(4)}
+                </div>
+            </div>` : ''}
         </div>
     </div>`;
 }
 
-function buildActivationsSection(activationsData: Record<string, unknown> | null): string {
+function buildActivationsSection(activationsData: ActivationsData | null): string {
     if (!activationsData) {
         return '';
     }
-    const data = activationsData as { method: string; num_samples: number; layers: { layer_name: string }[] };
     return `
     <div class="section">
         <div class="section-header">
@@ -160,16 +256,16 @@ function buildActivationsSection(activationsData: Record<string, unknown> | null
         <div class="interpretation-box" style="margin-bottom: 16px;">
             <div class="interpretation-title">${ICONS.info} How to Read These Plots</div>
             <div class="interpretation-content">
-                Each chart shows the <strong>${data.method.toUpperCase()}</strong> 2D projection of layer activations for <strong>${data.num_samples}</strong> test instances.
+                Each chart shows the <strong>${activationsData.method.toUpperCase()}</strong> 2D projection of layer activations for <strong>${activationsData.num_samples}</strong> test instances.
                 Points are colored by <strong>prediction label</strong>. Clusters that separate by protected attribute indicate the model is learning to encode protected information at that layer.
             </div>
         </div>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 16px;">
-            ${data.layers
+            ${activationsData.layers
                 .map(
-                    (layer: { layer_name: string }, idx: number) => `
+                    (layer, idx) => `
                 <div class="chart-container">
-                    <div class="chart-title">${layer.layer_name} Activations (${data.method.toUpperCase()})</div>
+                    <div class="chart-title">${layer.layer_name} Activations (${activationsData.method.toUpperCase()})</div>
                     <div id="activation-layer-${idx}" style="height: 350px;"></div>
                 </div>`,
                 )
@@ -178,7 +274,33 @@ function buildActivationsSection(activationsData: Record<string, unknown> | null
     </div>`;
 }
 
-function buildQidSection(qidMetrics: Record<string, number>): string {
+function buildQidSection(qidMetrics: QidMetrics, metadata: AnalysisMetadata | undefined): string {
+    // Dynamic interpretation based on actual values
+    const meanQid = qidMetrics.mean_qid;
+    const pctDisc = qidMetrics.pct_discriminatory;
+    const di = qidMetrics.mean_disparate_impact;
+    const numAnalyzed = qidMetrics.num_analyzed || metadata?.maxSamples || 0;
+
+    let qidInterpretation = '';
+    if (meanQid < 0.01) {
+        qidInterpretation = `The model shows <strong>very low discrimination</strong> with a mean QID of only ${meanQid.toFixed(4)} bits. This means the model uses almost no protected information when making predictions. Only ${pctDisc.toFixed(1)}% of the ${numAnalyzed} analyzed instances showed any discriminatory behavior.`;
+    } else if (meanQid < 0.1) {
+        qidInterpretation = `The model shows <strong>mild discrimination</strong> with a mean QID of ${meanQid.toFixed(4)} bits. While not zero, this level suggests the model makes <strong>slight use</strong> of protected attributes. ${pctDisc.toFixed(1)}% of instances (${qidMetrics.num_discriminatory} out of ${numAnalyzed}) showed discriminatory behavior above the 0.1-bit threshold.`;
+    } else if (meanQid < 0.5) {
+        qidInterpretation = `The model shows <strong>moderate discrimination</strong> with a mean QID of ${meanQid.toFixed(4)} bits. This indicates the model is <strong>meaningfully using protected attributes</strong> in its decision-making. ${pctDisc.toFixed(1)}% of instances exhibited discriminatory behavior, which warrants further investigation and possible mitigation.`;
+    } else {
+        qidInterpretation = `The model shows <strong>significant discrimination</strong> with a mean QID of ${meanQid.toFixed(4)} bits. This is a <strong>serious concern</strong> - the model is heavily relying on protected attributes. ${pctDisc.toFixed(1)}% of instances are discriminatory. The worst case reaches ${qidMetrics.max_qid.toFixed(4)} bits. <strong>Retraining with fairness constraints is strongly recommended.</strong>`;
+    }
+
+    let diInterpretation = '';
+    if (di >= 0.8) {
+        diInterpretation = `The disparate impact ratio of <strong>${di.toFixed(3)}</strong> <strong>passes</strong> the four-fifths (80%) rule, indicating that protected groups receive favorable outcomes at rates comparable to the majority group.`;
+    } else if (di >= 0.6) {
+        diInterpretation = `The disparate impact ratio of <strong>${di.toFixed(3)}</strong> <strong>falls below</strong> the 80% threshold. Protected groups are receiving favorable outcomes at only <strong>${(di * 100).toFixed(1)}%</strong> of the rate of the majority group. This may constitute a legal violation in employment or lending contexts.`;
+    } else {
+        diInterpretation = `The disparate impact ratio of <strong>${di.toFixed(3)}</strong> indicates <strong>severe disparate impact</strong>. Protected groups receive favorable outcomes at less than ${(di * 100).toFixed(1)}% of the majority group's rate. This is a <strong>critical fairness violation</strong> that likely requires model revision.`;
+    }
+
     return `
     <div class="section">
         <div class="section-header">
@@ -191,9 +313,9 @@ function buildQidSection(qidMetrics: Record<string, number>): string {
             <div class="card">
                 <div class="card-header">
                     <span class="card-label">Mean QID</span>
-                    <span class="card-badge ${qidMetrics.mean_qid > 1.0 ? 'badge-warning' : 'badge-success'}">${qidMetrics.mean_qid > 1.0 ? 'High' : 'Low'}</span>
+                    <span class="card-badge ${meanQid > 1.0 ? 'badge-warning' : 'badge-success'}">${meanQid > 1.0 ? 'High' : 'Low'}</span>
                 </div>
-                <div class="card-value">${qidMetrics.mean_qid.toFixed(4)}<span class="card-unit">bits</span></div>
+                <div class="card-value">${meanQid.toFixed(4)}<span class="card-unit">bits</span></div>
                 <div class="card-description">Average protected information used in decisions. Lower is better.</div>
             </div>
             <div class="card">
@@ -207,13 +329,13 @@ function buildQidSection(qidMetrics: Record<string, number>): string {
             <div class="card">
                 <div class="card-header">
                     <span class="card-label">Discriminatory Instances</span>
-                    <span class="card-badge ${qidMetrics.pct_discriminatory > 10 ? 'badge-warning' : 'badge-success'}">${qidMetrics.pct_discriminatory > 10 ? 'Concerning' : 'Acceptable'}</span>
+                    <span class="card-badge ${pctDisc > 10 ? 'badge-warning' : 'badge-success'}">${pctDisc > 10 ? 'Concerning' : 'Acceptable'}</span>
                 </div>
-                <div class="card-value">${qidMetrics.num_discriminatory}<span class="card-unit">(${qidMetrics.pct_discriminatory.toFixed(1)}%)</span></div>
+                <div class="card-value">${qidMetrics.num_discriminatory}<span class="card-unit">(${pctDisc.toFixed(1)}%)</span></div>
                 <div class="card-description">Instances with QID > 0.1 bits showing potential bias.</div>
                 <div class="progress-container">
                     <div class="progress-bar">
-                        <div class="progress-fill" style="width: ${Math.min(qidMetrics.pct_discriminatory, 100)}%; background: ${qidMetrics.pct_discriminatory > 10 ? 'var(--accent-orange)' : 'var(--accent-green)'};"></div>
+                        <div class="progress-fill" style="width: ${Math.min(pctDisc, 100)}%; background: ${pctDisc > 10 ? 'var(--accent-orange)' : 'var(--accent-green)'};"></div>
                     </div>
                     <div class="progress-labels"><span>0%</span><span>10% threshold</span><span>100%</span></div>
                 </div>
@@ -221,26 +343,45 @@ function buildQidSection(qidMetrics: Record<string, number>): string {
             <div class="card">
                 <div class="card-header">
                     <span class="card-label">Disparate Impact Ratio</span>
-                    <span class="card-badge ${qidMetrics.mean_disparate_impact < 0.8 ? 'badge-danger' : 'badge-success'}">${qidMetrics.mean_disparate_impact < 0.8 ? 'Violation' : 'Compliant'}</span>
+                    <span class="card-badge ${di < 0.8 ? 'badge-danger' : 'badge-success'}">${di < 0.8 ? 'Violation' : 'Compliant'}</span>
                 </div>
-                <div class="card-value">${qidMetrics.mean_disparate_impact.toFixed(3)}</div>
+                <div class="card-value">${di.toFixed(3)}</div>
                 <div class="card-description">Ratio should be >= 0.8 for legal compliance.</div>
-                <div class="compliance-box ${qidMetrics.mean_disparate_impact >= 0.8 ? 'compliance-pass' : 'compliance-fail'}">
+                <div class="compliance-box ${di >= 0.8 ? 'compliance-pass' : 'compliance-fail'}">
                     <div class="compliance-header">
-                        ${qidMetrics.mean_disparate_impact >= 0.8 ? '&#10003; Passes 80% Rule' : '&#10007; Violates 80% Rule'}
+                        ${di >= 0.8 ? '&#10003; Passes 80% Rule' : '&#10007; Violates 80% Rule'}
                     </div>
                     <div class="compliance-text">
-                        ${qidMetrics.mean_disparate_impact >= 0.8
+                        ${di >= 0.8
                             ? 'Model meets legal fairness thresholds for hiring/lending decisions.'
                             : 'Model may exhibit legally actionable discrimination. Consider retraining with fairness constraints.'}
                     </div>
                 </div>
             </div>
         </div>
+        <div class="interpretation-box" style="margin-top: 16px;">
+            <div class="interpretation-title">${ICONS.lightbulb} Interpretation for This Dataset</div>
+            <div class="interpretation-content">
+                ${qidInterpretation}
+                <br><br>${diInterpretation}
+            </div>
+        </div>
     </div>`;
 }
 
-function buildSearchSection(searchResults: { best_qid: number; num_found: number }): string {
+function buildSearchSection(searchResults: SearchResults, _qidMetrics: QidMetrics): string {
+    const bestQid = searchResults.best_qid;
+    const numFound = searchResults.num_found;
+
+    let searchInterpretation = '';
+    if (bestQid < 0.01) {
+        searchInterpretation = `The search algorithm was <strong>unable to find strongly discriminatory instances</strong> (best QID: ${bestQid.toFixed(4)} bits). This is a positive sign suggesting the model has limited exploitable bias pathways. ${numFound} test cases were generated but all show minimal discrimination.`;
+    } else if (bestQid < 0.1) {
+        searchInterpretation = `The search found <strong>mild discriminatory behavior</strong> with the worst case at ${bestQid.toFixed(4)} bits. ${numFound} discriminatory instances were generated through local perturbation. While the discrimination level is relatively low, these instances reveal the specific input regions where the model is most vulnerable to bias.`;
+    } else {
+        searchInterpretation = `The search discovered <strong>notable discriminatory instances</strong> with the worst case reaching ${bestQid.toFixed(4)} bits. ${numFound} test cases demonstrate that specific input combinations cause the model to behave differently based on protected attributes. The histogram below shows how discrimination varies across these instances.`;
+    }
+
     return `
     <div class="section">
         <div class="section-header">
@@ -252,12 +393,12 @@ function buildSearchSection(searchResults: { best_qid: number; num_found: number
         <div class="cards-grid">
             <div class="card">
                 <div class="card-header"><span class="card-label">Best QID Found</span></div>
-                <div class="card-value">${searchResults.best_qid.toFixed(4)}<span class="card-unit">bits</span></div>
+                <div class="card-value">${bestQid.toFixed(4)}<span class="card-unit">bits</span></div>
                 <div class="card-description">Maximum discrimination discovered via gradient search.</div>
             </div>
             <div class="card">
                 <div class="card-header"><span class="card-label">Instances Generated</span></div>
-                <div class="card-value">${searchResults.num_found}</div>
+                <div class="card-value">${numFound}</div>
                 <div class="card-description">Discriminatory test cases found in local search.</div>
             </div>
         </div>
@@ -275,16 +416,49 @@ function buildSearchSection(searchResults: { best_qid: number; num_found: number
             <div class="chart-title">QID Values by Instance (Scatter Plot)</div>
             <div id="qid-chart" style="height: 350px;"></div>
         </div>
+        <div class="interpretation-box" style="margin-top: 16px;">
+            <div class="interpretation-title">${ICONS.lightbulb} Search Results Interpretation</div>
+            <div class="interpretation-content">${searchInterpretation}</div>
+        </div>
     </div>`;
 }
 
 function buildLayerSection(
-    layerAnalysis: { biased_layer: { sensitivity: number; layer_name: string; neuron_count: number }; all_layers: unknown[] } | null,
-    neuronAnalysis: { neuron_idx: number; impact_score: number }[] | null,
+    layerAnalysis: LayerAnalysis | null,
+    neuronAnalysis: NeuronAnalysis[] | null,
+    _training: TrainingData,
 ): string {
     if (!layerAnalysis) {
         return '';
     }
+
+    const biased = layerAnalysis.biased_layer;
+    const allLayers = layerAnalysis.all_layers || [];
+    const totalLayers = allLayers.length;
+
+    // Dynamic interpretation
+    let layerInterpretation = `The causal analysis identified <strong>${biased.layer_name}</strong> as the most biased layer
+        with a sensitivity score of <strong>${biased.sensitivity.toFixed(4)}</strong>.
+        This layer contains <strong>${biased.neuron_count} neurons</strong> and is `;
+
+    if (biased.layer_idx === 0) {
+        layerInterpretation += `the <strong>first hidden layer</strong>, suggesting bias enters the model early and propagates through subsequent layers. Early-layer bias typically means the model captures demographic patterns directly from input features.`;
+    } else if (biased.layer_idx === totalLayers - 1) {
+        layerInterpretation += `the <strong>last layer before output</strong>, suggesting bias accumulates through the network and manifests most strongly at the decision boundary. This pattern often occurs when multiple features interact to create discriminatory behavior.`;
+    } else {
+        layerInterpretation += `in the <strong>middle of the network</strong> (layer ${biased.layer_idx + 1} of ${totalLayers}). Middle-layer bias suggests the model forms intermediate representations that encode protected information.`;
+    }
+
+    let neuronInterpretation = '';
+    if (neuronAnalysis && neuronAnalysis.length > 0) {
+        const topNeuron = neuronAnalysis[0];
+        const topImpact = topNeuron.impact_score;
+        neuronInterpretation = `
+            <br><br>At the neuron level, <strong>Neuron ${topNeuron.neuron_idx}</strong> has the highest bias impact score of <strong>${topImpact.toFixed(4)}</strong>.
+            ${neuronAnalysis.length > 1 ? `The top ${Math.min(neuronAnalysis.length, 5)} biased neurons account for the majority of the layer's discriminatory behavior.` : ''}
+            These specific neurons could be targeted for debiasing techniques such as neuron pruning or fine-tuning.`;
+    }
+
     return `
     <div class="section">
         <div class="section-header">
@@ -297,19 +471,23 @@ function buildLayerSection(
             <div class="card">
                 <div class="card-header">
                     <span class="card-label">Most Biased Layer</span>
-                    <span class="card-badge ${layerAnalysis.biased_layer.sensitivity > 0.5 ? 'badge-warning' : 'badge-info'}">
-                        ${layerAnalysis.biased_layer.sensitivity > 0.5 ? 'High Sensitivity' : 'Moderate'}
+                    <span class="card-badge ${biased.sensitivity > 0.5 ? 'badge-warning' : 'badge-info'}">
+                        ${biased.sensitivity > 0.5 ? 'High Sensitivity' : 'Moderate'}
                     </span>
                 </div>
-                <div class="card-value">${layerAnalysis.biased_layer.layer_name}</div>
+                <div class="card-value">${biased.layer_name}</div>
                 <div class="card-description">
-                    Contains ${layerAnalysis.biased_layer.neuron_count} neurons with sensitivity score of ${layerAnalysis.biased_layer.sensitivity.toFixed(4)}
+                    Contains ${biased.neuron_count} neurons with sensitivity score of ${biased.sensitivity.toFixed(4)}
                 </div>
             </div>
         </div>
         <div class="chart-container">
             <div class="chart-title">Layer-Wise Bias Sensitivity</div>
             <div id="layer-chart" style="height: 300px;"></div>
+        </div>
+        <div class="interpretation-box" style="margin-top: 16px;">
+            <div class="interpretation-title">${ICONS.lightbulb} Layer Analysis Interpretation</div>
+            <div class="interpretation-content">${layerInterpretation}${neuronInterpretation}</div>
         </div>
     </div>
 
@@ -347,10 +525,38 @@ function buildLayerSection(
     </div>` : ''}`;
 }
 
-function buildShapSection(explanationsData: { shap?: Record<string, unknown>; lime?: Record<string, unknown> } | null): string {
-    if (!explanationsData?.shap) {
+function buildShapSection(shapData: ShapData | null, training: TrainingData): string {
+    if (!shapData) {
         return '';
     }
+
+    // Dynamic interpretation based on SHAP values
+    const importance = shapData.global_importance;
+    const names = shapData.feature_names;
+    const protectedAttrs = training.protected_features;
+
+    // Sort features by importance
+    const sorted = importance
+        .map((val: number, idx: number) => ({ name: names[idx], importance: val, idx }))
+        .sort((a: { importance: number }, b: { importance: number }) => b.importance - a.importance);
+
+    const topFeature = sorted[0];
+    const topProtected = sorted.filter((f: { name: string }) => protectedAttrs.includes(f.name));
+
+    let shapInterpretation = `Across <strong>${shapData.num_explained} explained instances</strong>, the most influential feature is <strong>${topFeature.name}</strong> with a mean |SHAP value| of <strong>${topFeature.importance.toFixed(4)}</strong> in log-odds space.`;
+
+    if (topProtected.length > 0) {
+        const topP = topProtected[0];
+        const rank = sorted.findIndex((f: { name: string }) => f.name === topP.name) + 1;
+        if (rank <= 3) {
+            shapInterpretation += ` <br><br><strong style="color: var(--accent-red);">Fairness concern:</strong> The protected attribute <strong>"${topP.name}"</strong> ranks <strong>#${rank}</strong> in feature importance (SHAP value: ${topP.importance.toFixed(4)}). This means the model is <strong>significantly using this protected attribute</strong> to make predictions, which is a direct indicator of potential discrimination.`;
+        } else {
+            shapInterpretation += ` <br><br>The protected attribute <strong>"${topP.name}"</strong> ranks #${rank} out of ${names.length} features (SHAP value: ${topP.importance.toFixed(4)}). Its relatively low ranking suggests the model <strong>does not heavily rely</strong> on this protected attribute for predictions.`;
+        }
+    }
+
+    shapInterpretation += `<br><br>The top 3 most influential features are: <strong>${sorted.slice(0, 3).map((f: { name: string; importance: number }) => `${f.name} (${f.importance.toFixed(4)})`).join('</strong>, <strong>')}</strong>.`;
+
     return `
     <div class="section">
         <div class="section-header">
@@ -364,8 +570,8 @@ function buildShapSection(explanationsData: { shap?: Record<string, unknown>; li
             <div class="interpretation-content">
                 <strong>SHAP (SHapley Additive exPlanations)</strong> uses game theory to compute the contribution of each feature to the model's prediction.
                 Values are computed in <strong>log-odds space</strong> for more meaningful feature attributions.
-                Higher bars indicate features with more influence. Features related to protected attributes may indicate bias pathways.
-                In the beeswarm plot, each dot represents one instance. Color indicates the feature value (blue = low, red = high).
+                Higher bars indicate features with more influence. In the beeswarm plot, each dot represents one instance.
+                Color indicates the feature value (blue = low, red = high).
                 Dots to the right push the prediction toward favorable, dots to the left push toward unfavorable.
             </div>
         </div>
@@ -377,13 +583,52 @@ function buildShapSection(explanationsData: { shap?: Record<string, unknown>; li
             <div class="chart-title">SHAP Summary (Beeswarm Plot)</div>
             <div id="shap-beeswarm-chart" style="height: 400px;"></div>
         </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px;">
+            <div class="chart-container">
+                <div class="chart-title">SHAP Scatter: ${topFeature.name} (Top Feature)</div>
+                <div id="shap-scatter-chart" style="height: 350px;"></div>
+            </div>
+            <div class="chart-container">
+                <div class="chart-title">SHAP Heatmap (Instances vs Features)</div>
+                <div id="shap-heatmap-chart" style="height: 350px;"></div>
+            </div>
+        </div>
+        <div class="interpretation-box" style="margin-top: 16px;">
+            <div class="interpretation-title">${ICONS.lightbulb} SHAP Interpretation for This Dataset</div>
+            <div class="interpretation-content">${shapInterpretation}</div>
+        </div>
     </div>`;
 }
 
-function buildLimeSection(explanationsData: { shap?: Record<string, unknown>; lime?: Record<string, unknown> } | null): string {
-    if (!explanationsData?.lime) {
+function buildLimeSection(limeData: LimeData | null, training: TrainingData): string {
+    if (!limeData) {
         return '';
     }
+
+    // Dynamic interpretation
+    const importance = limeData.aggregated_importance;
+    const names = limeData.feature_names;
+    const protectedAttrs = training.protected_features;
+
+    const sorted = importance
+        .map((val: number, idx: number) => ({ name: names[idx], importance: val, idx }))
+        .sort((a: { importance: number }, b: { importance: number }) => b.importance - a.importance);
+
+    const topFeature = sorted[0];
+    const topProtected = sorted.filter((f: { name: string }) => protectedAttrs.includes(f.name));
+
+    let limeInterpretation = `LIME analyzed <strong>${limeData.num_explained} instances</strong> by perturbing inputs locally and fitting linear models. The most influential feature is <strong>${topFeature.name}</strong> with an aggregated importance of <strong>${topFeature.importance.toFixed(4)}</strong>.`;
+
+    if (topProtected.length > 0) {
+        const topP = topProtected[0];
+        const rank = sorted.findIndex((f: { name: string }) => f.name === topP.name) + 1;
+        limeInterpretation += ` The protected attribute <strong>"${topP.name}"</strong> ranks #${rank} in LIME importance.`;
+
+        if (rank <= 3) {
+            limeInterpretation += ` This <strong>corroborates the SHAP findings</strong> - the model locally relies on protected information for individual predictions.`;
+        }
+    }
+
     return `
     <div class="section">
         <div class="section-header">
@@ -403,33 +648,9 @@ function buildLimeSection(explanationsData: { shap?: Record<string, unknown>; li
             <div class="chart-title">Aggregated Feature Importance (LIME)</div>
             <div id="lime-global-chart" style="height: 400px;"></div>
         </div>
-    </div>`;
-}
-
-function buildInterpretationSection(): string {
-    return `
-    <div class="section">
-        <div class="section-header">
-            <div class="section-icon" style="background: rgba(79, 195, 247, 0.2); color: var(--accent-blue);">
-                ${ICONS.lightbulb}
-            </div>
-            <h2 class="section-title">Understanding the Results</h2>
-        </div>
-        <div class="interpretation-box">
-            <div class="interpretation-title">${ICONS.info} What is QID (Quantitative Individual Discrimination)?</div>
-            <div class="interpretation-content">
-                QID measures how many <strong>bits of protected information</strong> (e.g., gender, race, age) the model uses to make its predictions.
-                A value of <strong>0 bits</strong> means the model is perfectly fair and doesn't use any protected attributes.
-                <strong>Higher values indicate more bias</strong> - the model is learning to discriminate based on protected characteristics.
-            </div>
-        </div>
         <div class="interpretation-box" style="margin-top: 16px;">
-            <div class="interpretation-title">${ICONS.info} The 80% Rule (Four-Fifths Rule)</div>
-            <div class="interpretation-content">
-                The <strong>disparate impact ratio</strong> should be >= <strong>0.8 (80%)</strong> to comply with legal standards in employment and lending.
-                This means the selection rate for a protected group should be at least 80% of the rate for the most favored group.
-                <strong>Values below 0.8 may indicate legally actionable discrimination</strong> and could expose your organization to regulatory scrutiny.
-            </div>
+            <div class="interpretation-title">${ICONS.lightbulb} LIME Interpretation for This Dataset</div>
+            <div class="interpretation-content">${limeInterpretation}</div>
         </div>
     </div>`;
 }
