@@ -1,12 +1,14 @@
 // Generates the Plotly chart rendering JavaScript for the webview
 
+import { SearchResults, QidMetrics, LayerAnalysis, NeuronAnalysis, ActivationsData, ShapData, LimeData } from './types';
+
 export function getChartsScript(
-    searchResults: { discriminatory_instances: unknown[] },
-    qidMetrics: { mean_disparate_impact: number },
-    layerAnalysis: { all_layers: unknown[] } | null,
-    neuronAnalysis: unknown[] | null,
-    activationsData: unknown | null,
-    explanationsData: { shap: unknown | null; lime: unknown | null } | null,
+    searchResults: SearchResults,
+    qidMetrics: QidMetrics,
+    layerAnalysis: LayerAnalysis | null,
+    neuronAnalysis: NeuronAnalysis[] | null,
+    activationsData: ActivationsData | null,
+    explanationsData: { shap?: ShapData; lime?: LimeData } | null,
 ): string {
     return `
     <script>
@@ -175,6 +177,7 @@ export function getChartsScript(
                 .map(function(val, idx) { return { val: val, idx: idx }; })
                 .sort(function(a, b) { return b.val - a.val; });
 
+            // Global importance bar chart
             Plotly.newPlot('shap-global-chart', [{
                 y: shapIndices.map(function(d) { return shapData.feature_names[d.idx]; }),
                 x: shapIndices.map(function(d) { return d.val; }),
@@ -193,17 +196,15 @@ export function getChartsScript(
                 xaxis: { ...chartLayout.xaxis, title: { text: 'Mean |SHAP Value| (log-odds)', font: { color: '#a0a0a0' } } }
             }, { responsive: true });
 
-            // Beeswarm chart - proper SHAP summary plot
+            // Beeswarm chart
             if (shapData.shap_values && shapData.shap_values.length > 0) {
                 var numFeatures = shapData.feature_names.length;
                 var numInstances = shapData.shap_values.length;
                 var hasFeatureValues = shapData.feature_values && shapData.feature_values.length > 0;
 
-                // Build one trace per feature (sorted by importance)
                 var beeswarmTraces = [];
                 var sortedFeatureIndices = shapIndices.map(function(d) { return d.idx; });
 
-                // Collect all SHAP values and feature values for each feature
                 for (var fi = 0; fi < sortedFeatureIndices.length; fi++) {
                     var featIdx = sortedFeatureIndices[fi];
                     var featName = shapData.feature_names[featIdx];
@@ -218,7 +219,6 @@ export function getChartsScript(
                             if (hasFeatureValues) {
                                 featVals.push(shapData.feature_values[inst][featIdx]);
                             }
-                            // Add jitter for better visibility
                             jitterY.push(fi + (Math.random() - 0.5) * 0.4);
                         }
                     }
@@ -238,7 +238,6 @@ export function getChartsScript(
                             hovertemplate: featName + '<br>SHAP value: %{x:.4f}<extra></extra>'
                         };
 
-                        // Color by feature value if available, otherwise by SHAP value
                         if (hasFeatureValues && featVals.length > 0) {
                             traceConfig.marker.color = featVals;
                             traceConfig.marker.colorscale = [[0, '#4fc3f7'], [1, '#f44336']];
@@ -251,7 +250,7 @@ export function getChartsScript(
                                     len: 0.5
                                 };
                             }
-                            traceConfig.hovertemplate = featName + '<br>SHAP value: %{x:.4f}<br>Feature value: ' + '%{marker.color:.2f}<extra></extra>';
+                            traceConfig.hovertemplate = featName + '<br>SHAP value: %{x:.4f}<br>Feature value: %{marker.color:.2f}<extra></extra>';
                         } else {
                             traceConfig.marker.color = shapVals;
                             traceConfig.marker.colorscale = [[0, '#4fc3f7'], [0.5, '#a0a0a0'], [1, '#f44336']];
@@ -270,7 +269,6 @@ export function getChartsScript(
                     }
                 }
 
-                // Build y-axis tick labels from sorted feature names
                 var tickLabels = sortedFeatureIndices.map(function(idx) { return shapData.feature_names[idx]; });
                 var tickPositions = sortedFeatureIndices.map(function(_, i) { return i; });
 
@@ -292,6 +290,96 @@ export function getChartsScript(
                         autorange: false,
                         range: [-0.5, sortedFeatureIndices.length - 0.5]
                     }
+                }, { responsive: true });
+            }
+
+            // SHAP Scatter Plot for top feature
+            if (shapData.shap_values && shapData.shap_values.length > 0 && hasFeatureValues) {
+                var topFeatIdx = shapIndices[0].idx;
+                var topFeatName = shapData.feature_names[topFeatIdx];
+                var scatterX = [];
+                var scatterY = [];
+                var scatterColors = [];
+
+                for (var si = 0; si < numInstances; si++) {
+                    var fv = shapData.feature_values[si][topFeatIdx];
+                    var shv = shapData.shap_values[si][topFeatIdx];
+                    if (fv !== null && !isNaN(fv) && shv !== null && !isNaN(shv)) {
+                        scatterX.push(fv);
+                        scatterY.push(shv);
+                        // Color by another feature if available, otherwise by shap value
+                        if (shapIndices.length > 1) {
+                            var secondFeatIdx = shapIndices[1].idx;
+                            scatterColors.push(shapData.feature_values[si][secondFeatIdx]);
+                        } else {
+                            scatterColors.push(shv);
+                        }
+                    }
+                }
+
+                var scatterColorbarTitle = shapIndices.length > 1
+                    ? shapData.feature_names[shapIndices[1].idx]
+                    : 'SHAP Value';
+
+                Plotly.newPlot('shap-scatter-chart', [{
+                    x: scatterX,
+                    y: scatterY,
+                    type: 'scatter',
+                    mode: 'markers',
+                    marker: {
+                        size: 8,
+                        color: scatterColors,
+                        colorscale: [[0, '#4fc3f7'], [0.5, '#a0a0a0'], [1, '#f44336']],
+                        showscale: true,
+                        opacity: 0.7,
+                        colorbar: {
+                            title: { text: scatterColorbarTitle, font: { color: '#a0a0a0', size: 11 } },
+                            tickfont: { color: '#a0a0a0', size: 10 },
+                            thickness: 15
+                        }
+                    },
+                    hovertemplate: topFeatName + ': %{x:.3f}<br>SHAP: %{y:.4f}<extra></extra>'
+                }], {
+                    ...chartLayout,
+                    margin: { t: 10, r: 80, b: 50, l: 80 },
+                    xaxis: { ...chartLayout.xaxis, title: { text: topFeatName + ' (feature value)', font: { color: '#a0a0a0' } } },
+                    yaxis: { ...chartLayout.yaxis, title: { text: 'SHAP Value (log-odds)', font: { color: '#a0a0a0' } } }
+                }, { responsive: true });
+            }
+
+            // SHAP Heatmap (instances x features)
+            if (shapData.shap_values && shapData.shap_values.length > 0) {
+                var heatmapZ = [];
+                var heatmapY = [];
+                var heatmapX = sortedFeatureIndices.map(function(idx) { return shapData.feature_names[idx]; });
+
+                for (var hi = 0; hi < numInstances; hi++) {
+                    var row = sortedFeatureIndices.map(function(idx) {
+                        var v = shapData.shap_values[hi][idx];
+                        return (v === null || isNaN(v)) ? 0 : v;
+                    });
+                    heatmapZ.push(row);
+                    heatmapY.push('Instance ' + (hi + 1));
+                }
+
+                Plotly.newPlot('shap-heatmap-chart', [{
+                    z: heatmapZ,
+                    x: heatmapX,
+                    y: heatmapY,
+                    type: 'heatmap',
+                    colorscale: [[0, '#4fc3f7'], [0.5, '#252526'], [1, '#f44336']],
+                    zmid: 0,
+                    colorbar: {
+                        title: { text: 'SHAP Value', font: { color: '#a0a0a0', size: 11 } },
+                        tickfont: { color: '#a0a0a0', size: 10 },
+                        thickness: 15
+                    },
+                    hovertemplate: '%{x}<br>%{y}<br>SHAP: %{z:.4f}<extra></extra>'
+                }], {
+                    ...chartLayout,
+                    margin: { t: 10, r: 80, b: 100, l: 80 },
+                    xaxis: { ...chartLayout.xaxis, tickangle: -45 },
+                    yaxis: { ...chartLayout.yaxis }
                 }, { responsive: true });
             }
         }
