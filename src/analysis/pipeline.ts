@@ -24,12 +24,14 @@ export async function runAnalysis(
         async (progress) => {
             const startTime = Date.now();
             const fileName = path.basename(filePath);
+            const stepTimings: Record<string, number> = {};
 
             try {
                 // Step 1/6: Train model (0-30%)
                 progress.report({ increment: 0, message: 'Step 1/6: Training neural network model...' });
                 updateStatusBar('$(sync~spin) Training DNN...', `Training on ${fileName}`);
 
+                const trainStart = Date.now();
                 const trainResponse = await axios.post(
                     `${serverUrl}/train`,
                     {
@@ -42,11 +44,11 @@ export async function runAnalysis(
                     },
                     { timeout: 300000 },
                 );
+                stepTimings.training = Math.round((Date.now() - trainStart) / 1000);
 
-                const trainTime = Math.round((Date.now() - startTime) / 1000);
                 progress.report({
                     increment: 30,
-                    message: `Step 1/6: Training complete (${trainTime}s) - ${trainResponse.data.accuracy.toFixed(1)}% accuracy`,
+                    message: `Step 1/6: Training complete (${stepTimings.training}s) - ${trainResponse.data.accuracy.toFixed(1)}% accuracy`,
                 });
                 updateStatusBar(
                     `$(check) Trained [${trainResponse.data.accuracy.toFixed(0)}%]`,
@@ -57,11 +59,13 @@ export async function runAnalysis(
                 progress.report({ increment: 0, message: 'Step 2/6: Computing internal space visualization...' });
                 updateStatusBar('$(eye) Computing activations...', 'Dimensionality reduction');
 
+                const actStart = Date.now();
                 const activationsResponse = await axios.post(
                     `${serverUrl}/activations`,
                     { method: 'pca', max_samples: config.maxSamples },
                     { timeout: 60000 },
                 );
+                stepTimings.activations = Math.round((Date.now() - actStart) / 1000);
 
                 progress.report({ increment: 8, message: 'Step 2/6: Internal space computed' });
 
@@ -74,6 +78,7 @@ export async function runAnalysis(
                     protectedValues[idx.toString()] = [0.0, 1.0];
                 });
 
+                const qidStart = Date.now();
                 const analyzeResponse = await axios.post(
                     `${serverUrl}/analyze`,
                     {
@@ -86,6 +91,7 @@ export async function runAnalysis(
                     },
                     { timeout: 120000 },
                 );
+                stepTimings.qidAnalysis = Math.round((Date.now() - qidStart) / 1000);
 
                 progress.report({
                     increment: 17,
@@ -100,6 +106,7 @@ export async function runAnalysis(
                 progress.report({ increment: 0, message: 'Step 4/6: Searching for discriminatory instances...' });
                 updateStatusBar('$(search) Searching...', 'Finding discriminatory instances');
 
+                const searchStart = Date.now();
                 const searchResponse = await axios.post(
                     `${serverUrl}/search`,
                     {
@@ -109,6 +116,7 @@ export async function runAnalysis(
                     },
                     { timeout: 120000 },
                 );
+                stepTimings.search = Math.round((Date.now() - searchStart) / 1000);
 
                 progress.report({
                     increment: 15,
@@ -123,6 +131,7 @@ export async function runAnalysis(
                 progress.report({ increment: 0, message: 'Step 5/6: Localizing biased layers and neurons...' });
                 updateStatusBar('$(telescope) Debugging...', 'Localizing biased neurons');
 
+                const debugStart = Date.now();
                 const debugResponse = await axios.post(
                     `${serverUrl}/debug`,
                     {
@@ -132,6 +141,7 @@ export async function runAnalysis(
                     },
                     { timeout: 120000 },
                 );
+                stepTimings.debug = Math.round((Date.now() - debugStart) / 1000);
 
                 progress.report({ increment: 12, message: 'Step 5/6: Causal debugging complete' });
 
@@ -139,11 +149,13 @@ export async function runAnalysis(
                 progress.report({ increment: 0, message: 'Step 6/6: Computing LIME & SHAP explanations...' });
                 updateStatusBar('$(lightbulb) Computing explanations...', 'Running LIME and SHAP');
 
+                const explainStart = Date.now();
                 const explainResponse = await axios.post(
                     `${serverUrl}/explain`,
                     { method: 'both', num_instances: 10, max_background: 100 },
                     { timeout: 180000 },
                 );
+                stepTimings.explain = Math.round((Date.now() - explainStart) / 1000);
 
                 const totalTime = Math.round((Date.now() - startTime) / 1000);
                 progress.report({ increment: 18, message: `Analysis complete! Total time: ${totalTime}s` });
@@ -162,6 +174,14 @@ export async function runAnalysis(
                         filePath: filePath,
                         labelColumn: labelColumn,
                         totalTime: totalTime,
+                        protectedFeatures: protectedFeatures,
+                        hiddenLayers: hiddenLayers,
+                        epochs: config.epochs,
+                        maxSamples: config.maxSamples,
+                        globalIterations: config.globalIterations,
+                        localNeighbors: config.localNeighbors,
+                        numExplainInstances: 10,
+                        stepTimings: stepTimings,
                     },
                 });
 
