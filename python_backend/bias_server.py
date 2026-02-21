@@ -197,17 +197,57 @@ async def train_model(request: TrainRequest):
         # Compute test accuracy
         _, test_acc = trainer.validate(data_info["test_loader"])
 
+        # Compute dataset statistics for the report
+        import numpy as np
+        num_train = sum(len(batch_y) for _, batch_y in data_info["train_loader"])
+        num_val = sum(len(batch_y) for _, batch_y in data_info["val_loader"])
+        num_test = sum(len(batch_y) for _, batch_y in data_info["test_loader"])
+
+        # Get class distribution from training set
+        all_labels = []
+        for _, batch_y in data_info["train_loader"]:
+            all_labels.extend(batch_y.numpy().tolist())
+        unique, counts = np.unique(all_labels, return_counts=True)
+        class_distribution = {int(k): int(v) for k, v in zip(unique, counts)}
+
+        # Get protected attribute unique value counts from the dataset
+        protected_attr_info = {}
+        for feat_name, feat_idx in zip(
+            data_info["protected_features"], data_info["protected_indices"]
+        ):
+            feat_vals = []
+            for batch_X, _ in data_info["train_loader"]:
+                feat_vals.extend(batch_X[:, feat_idx].numpy().tolist())
+            unique_vals = np.unique(np.round(feat_vals, 2))
+            protected_attr_info[feat_name] = {
+                "index": feat_idx,
+                "num_unique_values": len(unique_vals),
+            }
+        current_data_info["protected_attr_info"] = protected_attr_info
+
         return {
             "status": "success",
             "message": "Model trained successfully",
             "accuracy": test_acc,
             "num_parameters": model.count_parameters(),
             "protected_features": data_info["protected_features"],
+            "hidden_layers": request.hidden_layers or [64, 32, 16, 8, 4],
             "training_history": {
                 "final_train_loss": history["train_losses"][-1],
                 "final_val_loss": history["val_losses"][-1],
                 "final_train_acc": history["train_accuracies"][-1],
                 "final_val_acc": history["val_accuracies"][-1],
+                "epochs_trained": len(history["train_losses"]),
+            },
+            "dataset_info": {
+                "num_features": data_info["input_dim"],
+                "num_train": num_train,
+                "num_val": num_val,
+                "num_test": num_test,
+                "num_total": num_train + num_val + num_test,
+                "class_distribution": class_distribution,
+                "feature_names": data_info["feature_names"],
+                "protected_attr_info": protected_attr_info,
             },
         }
 
