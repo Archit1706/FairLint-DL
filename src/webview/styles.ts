@@ -151,6 +151,263 @@ export function getStyles(): string {
         }
         .export-btn svg { flex-shrink: 0; }
 
+        /* Group Fairness Section Styles */
+        .gf-attr-panel {
+            animation: fadeIn 0.3s ease forwards;
+        }
+        .gf-attr-select {
+            padding: 8px 12px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 14px;
+            font-family: inherit;
+            cursor: pointer;
+            min-width: 200px;
+            outline: none;
+            transition: border-color 0.2s ease;
+            appearance: auto;
+        }
+        .gf-attr-select:focus { border-color: var(--accent-blue); }
+        .gf-attr-select:hover { background: var(--bg-tertiary); }
+
+        .gf-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+            margin-top: 12px;
+        }
+        .gf-table th {
+            text-align: left;
+            padding: 10px 12px;
+            color: var(--text-secondary);
+            font-weight: 600;
+            border-bottom: 2px solid var(--border-color);
+        }
+        .gf-table th:not(:first-child) { text-align: center; }
+        .gf-table td {
+            padding: 10px 12px;
+            text-align: center;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .gf-table td:first-child {
+            text-align: left;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+        .gf-table tr:hover { background: var(--bg-tertiary); }
+        .gf-table .gf-gap-good { color: var(--accent-green); font-weight: 600; }
+        .gf-table .gf-gap-bad { color: var(--accent-red); font-weight: 600; }
+
+        .gf-group-info {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+            padding: 8px 12px;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            display: flex;
+            gap: 24px;
+        }
+        .gf-group-info strong { color: var(--text-primary); }
+
+        /* Interactive LIME Styles */
+        .lime-interactive {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 24px;
+            margin-top: 16px;
+        }
+        .lime-interactive-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .lime-mode-toggle {
+            display: flex;
+            gap: 0;
+            margin-bottom: 20px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            overflow: hidden;
+            width: fit-content;
+        }
+        .lime-mode-btn {
+            padding: 8px 20px;
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+            border: none;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            font-family: inherit;
+            transition: all 0.2s ease;
+        }
+        .lime-mode-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+        .lime-mode-btn.active {
+            background: var(--accent-blue);
+            color: #fff;
+        }
+
+        .lime-index-input-group {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .lime-index-input-group label {
+            font-size: 13px;
+            color: var(--text-secondary);
+            white-space: nowrap;
+        }
+        .lime-index-input-group input {
+            width: 120px;
+            padding: 8px 12px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 14px;
+            font-family: monospace;
+            outline: none;
+            transition: border-color 0.2s ease;
+        }
+        .lime-index-input-group input:focus {
+            border-color: var(--accent-blue);
+        }
+        .lime-index-range {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .lime-input-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .lime-input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .lime-input-group label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            font-weight: 500;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .lime-input-group input {
+            padding: 7px 10px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 13px;
+            font-family: monospace;
+            outline: none;
+            transition: border-color 0.2s ease;
+        }
+        .lime-input-group input:focus {
+            border-color: var(--accent-blue);
+        }
+
+        .lime-generate-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 24px;
+            background: var(--accent-blue);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            font-family: inherit;
+            transition: all 0.2s ease;
+        }
+        .lime-generate-btn:hover {
+            background: #29b6f6;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(79, 195, 247, 0.3);
+        }
+        .lime-generate-btn:disabled {
+            background: var(--bg-tertiary);
+            color: var(--text-muted);
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .lime-loading {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            margin-top: 16px;
+            font-size: 13px;
+            color: var(--accent-blue);
+        }
+        .lime-loading.visible { display: flex; }
+        .lime-spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--border-color);
+            border-top-color: var(--accent-blue);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .lime-result-section {
+            margin-top: 20px;
+            display: none;
+        }
+        .lime-result-section.visible { display: block; }
+
+        .lime-prediction {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+        .lime-pred-item {
+            padding: 10px 16px;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            font-size: 13px;
+        }
+        .lime-pred-label {
+            color: var(--text-secondary);
+            margin-right: 8px;
+        }
+        .lime-pred-value {
+            font-weight: 600;
+            font-family: monospace;
+        }
+
+        .lime-error-msg {
+            display: none;
+            padding: 12px 16px;
+            background: rgba(244, 67, 54, 0.1);
+            border: 1px solid rgba(244, 67, 54, 0.3);
+            border-radius: 8px;
+            color: var(--accent-red);
+            font-size: 13px;
+            margin-top: 12px;
+        }
+        .lime-error-msg.visible { display: block; }
+
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(10px); }
             to { opacity: 1; transform: translateY(0); }

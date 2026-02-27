@@ -5,6 +5,8 @@ export interface TrainingData {
     protected_features: string[];
     num_parameters: number;
     hidden_layers?: number[];
+    cache_hit?: boolean;
+    message?: string;
     training_history?: {
         final_train_loss: number;
         final_val_loss: number;
@@ -69,6 +71,55 @@ export interface LimeData {
     }[];
 }
 
+export interface ConfusionMatrix {
+    tp: number;
+    fp: number;
+    tn: number;
+    fn: number;
+}
+
+export interface GroupInfo {
+    label: string;
+    size: number;
+}
+
+export interface DemographicParityMetrics {
+    positive_rate_a: number;
+    positive_rate_b: number;
+    difference: number;
+    ratio: number;
+}
+
+export interface EqualizedOddsMetrics {
+    tpr_a: number;
+    tpr_b: number;
+    fpr_a: number;
+    fpr_b: number;
+    tpr_difference: number;
+    fpr_difference: number;
+    max_difference: number;
+}
+
+export interface EqualOpportunityMetrics {
+    tpr_a: number;
+    tpr_b: number;
+    difference: number;
+}
+
+export interface GroupFairnessResult {
+    attribute_name: string;
+    attribute_index: number;
+    group_a: GroupInfo;
+    group_b: GroupInfo;
+    demographic_parity: DemographicParityMetrics;
+    equalized_odds: EqualizedOddsMetrics;
+    equal_opportunity: EqualOpportunityMetrics;
+    confusion_matrix: {
+        group_a: ConfusionMatrix;
+        group_b: ConfusionMatrix;
+    };
+}
+
 export interface ActivationsData {
     method: string;
     num_samples: number;
@@ -90,11 +141,12 @@ export interface AnalysisMetadata {
     localNeighbors?: number;
     numExplainInstances?: number;
     stepTimings?: Record<string, number>;
+    cacheHit?: boolean;
 }
 
 export interface AnalysisResults {
     training: TrainingData;
-    analysis: { qid_metrics: QidMetrics };
+    analysis: { qid_metrics: QidMetrics; group_fairness?: GroupFairnessResult[] };
     search: { search_results: SearchResults };
     debug?: { layer_analysis: LayerAnalysis; neuron_analysis: NeuronAnalysis[] };
     activations?: ActivationsData;

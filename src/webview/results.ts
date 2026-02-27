@@ -1,7 +1,10 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import axios from 'axios';
 import { getWebviewHtml } from './htmlBuilder';
+import { getServerUrl } from '../config/settings';
+import { parseError } from '../server/errors';
 import { AnalysisResults } from './types';
 
 export function showResults(results: AnalysisResults): void {
@@ -17,8 +20,40 @@ export function showResults(results: AnalysisResults): void {
     panel.webview.onDidReceiveMessage(async (message) => {
         if (message.command === 'saveJson') {
             await handleSaveJson(results);
+        } else if (message.command === 'explainInstance') {
+            await handleExplainInstance(panel, message.data);
         }
     });
+}
+
+async function handleExplainInstance(
+    panel: vscode.WebviewPanel,
+    data: { instanceType: string; instanceIndex?: number; featureValues?: number[] },
+): Promise<void> {
+    const serverUrl = getServerUrl();
+
+    try {
+        const response = await axios.post(
+            `${serverUrl}/explain-instance`,
+            {
+                instance_type: data.instanceType,
+                instance_index: data.instanceIndex,
+                feature_values: data.featureValues,
+            },
+            { timeout: 30000 },
+        );
+
+        panel.webview.postMessage({
+            command: 'limeInstanceResult',
+            data: response.data,
+        });
+    } catch (error: unknown) {
+        const parsed = parseError(error);
+        panel.webview.postMessage({
+            command: 'limeInstanceError',
+            error: parsed.detail,
+        });
+    }
 }
 
 async function handleSaveJson(results: AnalysisResults): Promise<void> {
@@ -50,6 +85,7 @@ async function handleSaveJson(results: AnalysisResults): Promise<void> {
                     training_history: results.training.training_history,
                 },
                 qid_metrics: results.analysis.qid_metrics,
+                group_fairness: results.analysis.group_fairness,
                 search_results: {
                     best_qid: results.search.search_results.best_qid,
                     num_found: results.search.search_results.num_found,

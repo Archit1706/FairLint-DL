@@ -1,9 +1,14 @@
-export function calculateFairnessScore(qidMetrics: {
-    mean_qid: number;
-    max_qid: number;
-    pct_discriminatory: number;
-    mean_disparate_impact: number;
-}): number {
+import { GroupFairnessResult } from './types';
+
+export function calculateFairnessScore(
+    qidMetrics: {
+        mean_qid: number;
+        max_qid: number;
+        pct_discriminatory: number;
+        mean_disparate_impact: number;
+    },
+    groupFairness?: GroupFairnessResult[] | null,
+): number {
     let score = 100;
 
     // Penalize for high mean QID (0-2 bits range maps to 0-30 penalty)
@@ -19,6 +24,16 @@ export function calculateFairnessScore(qidMetrics: {
 
     // Penalize for high max QID
     score -= Math.min(qidMetrics.max_qid * 5, 20);
+
+    // Group fairness penalties (average across all protected attributes)
+    if (groupFairness && groupFairness.length > 0) {
+        const avgDpDiff =
+            groupFairness.reduce((sum, gf) => sum + gf.demographic_parity.difference, 0) / groupFairness.length;
+        const avgEoDiff =
+            groupFairness.reduce((sum, gf) => sum + gf.equalized_odds.max_difference, 0) / groupFairness.length;
+        // Combined penalty: each 0.1 difference costs ~2.5 points, capped at 20
+        score -= Math.min((avgDpDiff + avgEoDiff) * 25, 20);
+    }
 
     return Math.max(0, Math.round(score));
 }

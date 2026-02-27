@@ -1,6 +1,6 @@
 // Generates the Plotly chart rendering JavaScript for the webview
 
-import { SearchResults, QidMetrics, LayerAnalysis, NeuronAnalysis, ActivationsData, ShapData, LimeData } from './types';
+import { SearchResults, QidMetrics, LayerAnalysis, NeuronAnalysis, ActivationsData, ShapData, LimeData, GroupFairnessResult } from './types';
 
 export function getChartsScript(
     searchResults: SearchResults,
@@ -9,6 +9,7 @@ export function getChartsScript(
     neuronAnalysis: NeuronAnalysis[] | null,
     activationsData: ActivationsData | null,
     explanationsData: { shap?: ShapData; lime?: LimeData } | null,
+    groupFairness?: GroupFairnessResult[] | null,
 ): string {
     return `
     <script>
@@ -412,6 +413,53 @@ export function getChartsScript(
                 yaxis: { ...chartLayout.yaxis, autorange: 'reversed' },
                 xaxis: { ...chartLayout.xaxis, title: { text: 'Mean |LIME Weight|', font: { color: '#a0a0a0' } } }
             }, { responsive: true });
+        }
+
+        // Group Fairness Comparison Chart
+        var _gfData = ${JSON.stringify(groupFairness || [])};
+
+        function renderGroupFairnessChart(attrIdx) {
+            var data = _gfData[attrIdx];
+            if (!data) return;
+
+            var dp = data.demographic_parity;
+            var eo = data.equalized_odds;
+
+            var categories = ['Positive Rate', 'True Positive Rate', 'False Positive Rate'];
+            var groupAVals = [dp.positive_rate_a, eo.tpr_a, eo.fpr_a];
+            var groupBVals = [dp.positive_rate_b, eo.tpr_b, eo.fpr_b];
+
+            Plotly.newPlot('gf-comparison-chart', [
+                {
+                    x: categories, y: groupAVals,
+                    name: 'Group A (' + data.attribute_name + ' \\u2264 0, n=' + data.group_a.size + ')',
+                    type: 'bar',
+                    marker: { color: '#4fc3f7', line: { width: 0 } },
+                    hovertemplate: '%{x}: %{y:.3f}<extra>Group A</extra>'
+                },
+                {
+                    x: categories, y: groupBVals,
+                    name: 'Group B (' + data.attribute_name + ' > 0, n=' + data.group_b.size + ')',
+                    type: 'bar',
+                    marker: { color: '#ff9800', line: { width: 0 } },
+                    hovertemplate: '%{x}: %{y:.3f}<extra>Group B</extra>'
+                }
+            ], {
+                ...chartLayout,
+                barmode: 'group',
+                margin: { t: 20, r: 20, b: 50, l: 60 },
+                yaxis: {
+                    ...chartLayout.yaxis,
+                    title: { text: 'Rate', font: { color: '#a0a0a0' } },
+                    range: [0, 1]
+                },
+                legend: { font: { color: '#e4e4e4' }, orientation: 'h', y: -0.2 }
+            }, { responsive: true });
+        }
+
+        // Initial render for first attribute
+        if (_gfData.length > 0) {
+            renderGroupFairnessChart(0);
         }
     </script>`;
 }
