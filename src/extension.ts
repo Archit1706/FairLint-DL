@@ -15,17 +15,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await startBackend(context);
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('fairlint-dl.analyzeDataset', analyzeDataset),
+        vscode.commands.registerCommand('fairlint-dl.analyzeDataset', (uri: vscode.Uri) => analyzeDataset(uri)),
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('fairlint-dl.analyzeFromMenu', async (uri: vscode.Uri) => {
-            await analyzeDataset(uri);
-        }),
+        vscode.commands.registerCommand('fairlint-dl.analyzeFromMenu', (uri: vscode.Uri) => analyzeDataset(uri)),
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('fairlint-dl.forceRetrain', (uri: vscode.Uri) => analyzeDataset(uri, true)),
     );
 }
 
-async function analyzeDataset(uri: vscode.Uri): Promise<void> {
+async function analyzeDataset(uri: vscode.Uri, forceRetrain: boolean = false): Promise<void> {
     const filePath = uri.fsPath;
 
     if (!filePath.endsWith('.csv')) {
@@ -163,7 +165,7 @@ async function analyzeDataset(uri: vscode.Uri): Promise<void> {
         .map((s: string) => parseInt(s.trim(), 10))
         .filter((n: number) => !isNaN(n) && n > 0);
 
-    await runAnalysis(filePath, labelColumn, protectedFeatures, hiddenLayers);
+    await runAnalysis(filePath, labelColumn, protectedFeatures, hiddenLayers, forceRetrain);
 }
 
 export function deactivate(): void {
