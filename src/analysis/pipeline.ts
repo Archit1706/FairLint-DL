@@ -11,6 +11,7 @@ export async function runAnalysis(
     labelColumn: string,
     protectedFeatures: string[],
     hiddenLayers: number[],
+    forceRetrain: boolean = false,
 ): Promise<void> {
     const config = getConfig();
     const serverUrl = getServerUrl();
@@ -41,18 +42,25 @@ export async function runAnalysis(
                         num_epochs: config.epochs,
                         batch_size: config.batchSize,
                         hidden_layers: hiddenLayers,
+                        force_retrain: forceRetrain,
                     },
                     { timeout: 300000 },
                 );
                 stepTimings.training = Math.round((Date.now() - trainStart) / 1000);
 
-                progress.report({
-                    increment: 30,
-                    message: `Step 1/6: Training complete (${stepTimings.training}s) - ${trainResponse.data.accuracy.toFixed(1)}% accuracy`,
-                });
+                const cacheHit = trainResponse.data.cache_hit === true;
+                const trainMsg = cacheHit
+                    ? `Step 1/6: Loaded cached model (<1s) - ${trainResponse.data.accuracy.toFixed(1)}% accuracy`
+                    : `Step 1/6: Training complete (${stepTimings.training}s) - ${trainResponse.data.accuracy.toFixed(1)}% accuracy`;
+
+                progress.report({ increment: 30, message: trainMsg });
                 updateStatusBar(
-                    `$(check) Trained [${trainResponse.data.accuracy.toFixed(0)}%]`,
-                    `Training complete: ${trainResponse.data.accuracy.toFixed(1)}% accuracy`,
+                    cacheHit
+                        ? `$(database) Cached [${trainResponse.data.accuracy.toFixed(0)}%]`
+                        : `$(check) Trained [${trainResponse.data.accuracy.toFixed(0)}%]`,
+                    cacheHit
+                        ? `Loaded cached model: ${trainResponse.data.accuracy.toFixed(1)}% accuracy`
+                        : `Training complete: ${trainResponse.data.accuracy.toFixed(1)}% accuracy`,
                 );
 
                 // Step 2/6: Internal space visualization (30-38%)
@@ -93,9 +101,10 @@ export async function runAnalysis(
                 );
                 stepTimings.qidAnalysis = Math.round((Date.now() - qidStart) / 1000);
 
+                const numGroupMetrics = analyzeResponse.data.group_fairness?.length || 0;
                 progress.report({
                     increment: 17,
-                    message: `Step 3/6: QID metrics computed - Mean QID: ${analyzeResponse.data.qid_metrics.mean_qid.toFixed(4)} bits`,
+                    message: `Step 3/6: Fairness metrics computed - Mean QID: ${analyzeResponse.data.qid_metrics.mean_qid.toFixed(4)} bits | ${numGroupMetrics} group metric${numGroupMetrics !== 1 ? 's' : ''}`,
                 });
                 updateStatusBar(
                     `$(graph) QID: ${analyzeResponse.data.qid_metrics.mean_qid.toFixed(2)} bits`,
@@ -182,6 +191,7 @@ export async function runAnalysis(
                         localNeighbors: config.localNeighbors,
                         numExplainInstances: 10,
                         stepTimings: stepTimings,
+                        cacheHit: cacheHit,
                     },
                 });
 
