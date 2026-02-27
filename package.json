@@ -183,6 +183,10 @@
             {
                 "command": "fairlint-dl.analyzeFromMenu",
                 "title": "FairLint-DL: Analyze This Dataset"
+            },
+            {
+                "command": "fairlint-dl.forceRetrain",
+                "title": "FairLint-DL: Analyze Dataset (Force Retrain)"
             }
         ],
         "menus": {
@@ -190,6 +194,11 @@
                 {
                     "when": "resourceExtname == .csv",
                     "command": "fairlint-dl.analyzeFromMenu",
+                    "group": "navigation"
+                },
+                {
+                    "when": "resourceExtname == .csv",
+                    "command": "fairlint-dl.forceRetrain",
                     "group": "navigation"
                 }
             ]
