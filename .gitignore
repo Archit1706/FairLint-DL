@@ -236,4 +236,8 @@ __marimo__/
 # Ignore CSV files
 *.csv
 
+# FairLint-DL model cache
+.fairlint_cache/
+
 .claude
+/papers/
