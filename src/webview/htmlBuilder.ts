@@ -13,6 +13,7 @@ import {
     LimeData,
     ActivationsData,
     AnalysisMetadata,
+    GroupFairnessResult,
 } from './types';
 
 export function getWebviewHtml(results: AnalysisResults): string {
@@ -25,8 +26,18 @@ export function getWebviewHtml(results: AnalysisResults): string {
     const metadata = results.metadata;
     const training = results.training;
 
-    const fairnessScore = calculateFairnessScore(qidMetrics);
+    const fairnessScore = calculateFairnessScore(qidMetrics, results.analysis.group_fairness);
     const fairnessStatus = getFairnessStatus(fairnessScore);
+
+    const numTestInstances = training.dataset_info?.num_test || 0;
+    const limeFeatureNames = explanationsData?.lime?.feature_names || training.dataset_info?.feature_names || [];
+    // Get default feature values from the first LIME explanation if available
+    const defaultFeatureValues = explanationsData?.lime?.explanations?.[0]
+        ? ((): number[] => {
+              // We don't have raw feature values in LIME explanations, so use zeros
+              return new Array(limeFeatureNames.length).fill(0);
+          })()
+        : new Array(limeFeatureNames.length).fill(0);
 
     const headScript = `
     <script>
@@ -35,9 +46,168 @@ export function getWebviewHtml(results: AnalysisResults): string {
             if (!_vscodeApi) return;
             try { _vscodeApi.postMessage({ command: 'saveJson' }); } catch (e) { console.error('Download JSON error:', e); }
         }
+
+        // Group Fairness attribute switching
+        function switchGroupFairnessAttr(selectEl) {
+            var selectedIdx = parseInt(selectEl.value, 10);
+            var panels = document.querySelectorAll('.gf-attr-panel');
+            for (var i = 0; i < panels.length; i++) {
+                panels[i].style.display = 'none';
+            }
+            var target = document.getElementById('gf-attr-panel-' + selectedIdx);
+            if (target) target.style.display = 'block';
+            // Re-render chart (renderGroupFairnessChart defined in chartsScript, available by user interaction time)
+            if (typeof renderGroupFairnessChart === 'function') {
+                renderGroupFairnessChart(selectedIdx);
+            }
+        }
+
+        // Interactive LIME state
+        var _limeMode = 'index';
+        var _limeFeatureNames = ${JSON.stringify(limeFeatureNames)};
+        var _numTestInstances = ${numTestInstances};
+
+        function toggleLimeMode(mode) {
+            _limeMode = mode;
+            var indexSection = document.getElementById('lime-index-section');
+            var customSection = document.getElementById('lime-custom-section');
+            var indexBtn = document.getElementById('lime-mode-index');
+            var customBtn = document.getElementById('lime-mode-custom');
+
+            if (mode === 'index') {
+                indexSection.style.display = 'flex';
+                customSection.style.display = 'none';
+                indexBtn.classList.add('active');
+                customBtn.classList.remove('active');
+            } else {
+                indexSection.style.display = 'none';
+                customSection.style.display = 'grid';
+                indexBtn.classList.remove('active');
+                customBtn.classList.add('active');
+            }
+        }
+
+        function generateLimeInstance() {
+            if (!_vscodeApi) return;
+
+            var loading = document.getElementById('lime-instance-loading');
+            var resultSection = document.getElementById('lime-instance-result');
+            var errorMsg = document.getElementById('lime-instance-error');
+            var generateBtn = document.getElementById('lime-generate-btn');
+
+            // Reset state
+            errorMsg.classList.remove('visible');
+            resultSection.classList.remove('visible');
+            loading.classList.add('visible');
+            generateBtn.disabled = true;
+
+            var data = {};
+            if (_limeMode === 'index') {
+                var indexInput = document.getElementById('lime-instance-index');
+                var idx = parseInt(indexInput.value, 10);
+                if (isNaN(idx) || idx < 0 || idx >= _numTestInstances) {
+                    showLimeError('Please enter a valid index between 0 and ' + (_numTestInstances - 1));
+                    return;
+                }
+                data = { instanceType: 'index', instanceIndex: idx };
+            } else {
+                var featureValues = [];
+                for (var i = 0; i < _limeFeatureNames.length; i++) {
+                    var input = document.getElementById('lime-feature-' + i);
+                    var val = parseFloat(input.value);
+                    if (isNaN(val)) {
+                        showLimeError('Invalid value for feature "' + _limeFeatureNames[i] + '". Please enter a number.');
+                        return;
+                    }
+                    featureValues.push(val);
+                }
+                data = { instanceType: 'custom', featureValues: featureValues };
+            }
+
+            try {
+                _vscodeApi.postMessage({ command: 'explainInstance', data: data });
+            } catch (e) {
+                showLimeError('Failed to send request: ' + e.message);
+            }
+        }
+
+        function showLimeError(msg) {
+            var loading = document.getElementById('lime-instance-loading');
+            var errorMsg = document.getElementById('lime-instance-error');
+            var generateBtn = document.getElementById('lime-generate-btn');
+            loading.classList.remove('visible');
+            generateBtn.disabled = false;
+            errorMsg.textContent = msg;
+            errorMsg.classList.add('visible');
+        }
+
+        function renderLimeInstanceResult(data) {
+            var loading = document.getElementById('lime-instance-loading');
+            var resultSection = document.getElementById('lime-instance-result');
+            var generateBtn = document.getElementById('lime-generate-btn');
+            loading.classList.remove('visible');
+            generateBtn.disabled = false;
+
+            // Show prediction probabilities
+            var predDiv = document.getElementById('lime-instance-prediction');
+            var proba = data.explanation.prediction_proba;
+            predDiv.innerHTML =
+                '<div class="lime-pred-item"><span class="lime-pred-label">Unfavorable (Class 0):</span><span class="lime-pred-value" style="color: ' + (proba[0] > 0.5 ? '#f44336' : '#a0a0a0') + '">' + (proba[0] * 100).toFixed(1) + '%</span></div>' +
+                '<div class="lime-pred-item"><span class="lime-pred-label">Favorable (Class 1):</span><span class="lime-pred-value" style="color: ' + (proba[1] > 0.5 ? '#4caf50' : '#a0a0a0') + '">' + (proba[1] * 100).toFixed(1) + '%</span></div>';
+
+            // Render LIME bar chart
+            var weights = data.explanation.feature_weights;
+            // feature_weights is an array of [feature_name_condition, weight] pairs
+            // Sort by absolute weight
+            weights.sort(function(a, b) { return Math.abs(b[1]) - Math.abs(a[1]); });
+
+            // Take top 15 features for readability
+            var topWeights = weights.slice(0, 15);
+
+            var labels = topWeights.map(function(w) { return w[0]; });
+            var values = topWeights.map(function(w) { return w[1]; });
+            var colors = values.map(function(v) { return v >= 0 ? '#4caf50' : '#f44336'; });
+
+            Plotly.newPlot('lime-instance-chart', [{
+                y: labels.reverse(),
+                x: values.reverse(),
+                type: 'bar',
+                orientation: 'h',
+                marker: {
+                    color: colors.reverse(),
+                    line: { width: 0 }
+                },
+                hovertemplate: '%{y}: %{x:.4f}<extra></extra>'
+            }], {
+                plot_bgcolor: '#252526',
+                paper_bgcolor: '#252526',
+                font: { color: '#e4e4e4', family: '-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif' },
+                margin: { t: 20, r: 20, b: 50, l: 200 },
+                xaxis: {
+                    gridcolor: '#3c3c3c',
+                    zerolinecolor: '#6e6e6e',
+                    title: { text: 'LIME Weight (green = favorable, red = unfavorable)', font: { color: '#a0a0a0', size: 12 } }
+                },
+                yaxis: { gridcolor: '#3c3c3c', zerolinecolor: '#3c3c3c' },
+                height: 400
+            }, { responsive: true });
+
+            resultSection.classList.add('visible');
+        }
+
+        // Listen for messages from the extension
+        window.addEventListener('message', function(event) {
+            var message = event.data;
+            if (message.command === 'limeInstanceResult') {
+                renderLimeInstanceResult(message.data);
+            } else if (message.command === 'limeInstanceError') {
+                showLimeError(message.error || 'An error occurred while computing LIME explanation.');
+            }
+        });
     </script>`;
 
-    const chartsScript = getChartsScript(searchResults, qidMetrics, layerAnalysis, neuronAnalysis, activationsData, explanationsData);
+    const groupFairness = results.analysis.group_fairness || null;
+    const chartsScript = getChartsScript(searchResults, qidMetrics, layerAnalysis, neuronAnalysis, activationsData, explanationsData, groupFairness);
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -54,6 +224,7 @@ export function getWebviewHtml(results: AnalysisResults): string {
     ${buildTrainingSection(training)}
     ${buildActivationsSection(activationsData)}
     ${buildQidSection(qidMetrics, metadata)}
+    ${buildGroupFairnessSection(groupFairness, training)}
     ${buildSearchSection(searchResults, qidMetrics)}
     ${buildLayerSection(layerAnalysis, neuronAnalysis, training)}
     ${buildShapSection(explanationsData?.shap as ShapData | null, training)}
@@ -159,10 +330,15 @@ function buildPipelineOverview(
                 The 6-step analysis pipeline was executed as follows:
                 <br><br>
                 <strong>Step 1 - Model Training</strong> (${timings.training || '?'}s):
-                A deep neural network with architecture [${(metadata?.hiddenLayers || training.hidden_layers || []).join(' &rarr; ')} &rarr; 2]
-                was trained for <strong>${hist?.epochs_trained || metadata?.epochs || '?'} epochs</strong>.
-                Final accuracy: <strong>${training.accuracy.toFixed(1)}%</strong>
-                (train loss: ${hist?.final_train_loss?.toFixed(4) || 'N/A'}, val loss: ${hist?.final_val_loss?.toFixed(4) || 'N/A'}).
+                ${metadata?.cacheHit
+                    ? `A previously trained model was <strong>loaded from cache</strong> (skipped training).
+                    Architecture: [${(metadata?.hiddenLayers || training.hidden_layers || []).join(' &rarr; ')} &rarr; 2],
+                    accuracy: <strong>${training.accuracy.toFixed(1)}%</strong>.`
+                    : `A deep neural network with architecture [${(metadata?.hiddenLayers || training.hidden_layers || []).join(' &rarr; ')} &rarr; 2]
+                    was trained for <strong>${hist?.epochs_trained || metadata?.epochs || '?'} epochs</strong>.
+                    Final accuracy: <strong>${training.accuracy.toFixed(1)}%</strong>
+                    (train loss: ${hist?.final_train_loss?.toFixed(4) || 'N/A'}, val loss: ${hist?.final_val_loss?.toFixed(4) || 'N/A'}).`
+                }
                 <br><br>
                 <strong>Step 2 - Internal Space Visualization</strong> (${timings.activations || '?'}s):
                 Extracted activations from each hidden layer and projected them to 2D using PCA for
@@ -201,7 +377,7 @@ function buildTrainingSection(training: TrainingData): string {
             <div class="card">
                 <div class="card-header">
                     <span class="card-label">Model Accuracy</span>
-                    <span class="card-badge badge-success">Trained</span>
+                    <span class="card-badge badge-success">${training.cache_hit ? 'Cached' : 'Trained'}</span>
                 </div>
                 <div class="card-value">${training.accuracy.toFixed(1)}<span class="card-unit">%</span></div>
                 <div class="card-description">Test set classification accuracy</div>
@@ -365,6 +541,207 @@ function buildQidSection(qidMetrics: QidMetrics, metadata: AnalysisMetadata | un
                 ${qidInterpretation}
                 <br><br>${diInterpretation}
             </div>
+        </div>
+    </div>`;
+}
+
+function buildGroupFairnessSection(
+    groupFairness: GroupFairnessResult[] | null,
+    _training: TrainingData,
+): string {
+    if (!groupFairness || groupFairness.length === 0) {
+        return '';
+    }
+
+    // Attribute selector dropdown
+    const options = groupFairness
+        .map((gf, idx) => `<option value="${idx}">${gf.attribute_name}</option>`)
+        .join('');
+
+    // Build per-attribute panels
+    const panels = groupFairness
+        .map((gf, idx) => buildSingleAttributePanel(gf, idx))
+        .join('');
+
+    return `
+    <div class="section">
+        <div class="section-header">
+            <div class="section-icon" style="background: rgba(76, 175, 80, 0.2); color: var(--accent-green);">
+                ${ICONS.scale}
+            </div>
+            <h2 class="section-title">Group Fairness Metrics</h2>
+        </div>
+        <div class="interpretation-box" style="margin-bottom: 16px;">
+            <div class="interpretation-title">${ICONS.info} What are Group Fairness Metrics?</div>
+            <div class="interpretation-content">
+                These metrics measure whether the model treats <strong>different demographic groups</strong> equitably.
+                Unlike QID (which measures individual-level discrimination), these metrics compare
+                <strong>aggregate outcomes</strong> across groups defined by protected attributes.
+                Groups are split by the standardized attribute value (&le;0 vs &gt;0, corresponding to below-average vs above-average after normalization).
+                <br><br>
+                <strong>Demographic Parity</strong> checks if both groups receive positive predictions at equal rates.
+                <strong>Equalized Odds</strong> checks if error rates (TPR and FPR) are equal across groups.
+                <strong>Equal Opportunity</strong> checks if true positive rates are equal (ensuring qualified members of both groups are treated equally).
+            </div>
+        </div>
+        ${groupFairness.length > 1 ? `
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
+            <label for="gf-attr-select" style="font-size: 14px; color: var(--text-secondary); white-space: nowrap;">
+                Protected Attribute:
+            </label>
+            <select id="gf-attr-select" class="gf-attr-select" onchange="switchGroupFairnessAttr(this)">
+                ${options}
+            </select>
+        </div>` : ''}
+        ${panels}
+        <div class="chart-container" style="margin-top: 16px;">
+            <div class="chart-title">Per-Group Rate Comparison</div>
+            <div id="gf-comparison-chart" style="height: 350px;"></div>
+        </div>
+    </div>`;
+}
+
+function buildSingleAttributePanel(gf: GroupFairnessResult, idx: number): string {
+    const dp = gf.demographic_parity;
+    const eo = gf.equalized_odds;
+    const eop = gf.equal_opportunity;
+    const cm = gf.confusion_matrix;
+    const display = idx === 0 ? 'block' : 'none';
+
+    // Badge logic
+    const dpBadge = dp.difference < 0.1 ? 'badge-success' : dp.difference < 0.2 ? 'badge-warning' : 'badge-danger';
+    const dpLabel = dp.difference < 0.1 ? 'Fair' : dp.difference < 0.2 ? 'Marginal' : 'Unfair';
+
+    const eoBadge =
+        eo.max_difference < 0.1 ? 'badge-success' : eo.max_difference < 0.2 ? 'badge-warning' : 'badge-danger';
+    const eoLabel = eo.max_difference < 0.1 ? 'Fair' : eo.max_difference < 0.2 ? 'Marginal' : 'Unfair';
+
+    const eopBadge = eop.difference < 0.1 ? 'badge-success' : eop.difference < 0.2 ? 'badge-warning' : 'badge-danger';
+    const eopLabel = eop.difference < 0.1 ? 'Fair' : eop.difference < 0.2 ? 'Marginal' : 'Unfair';
+
+    // Dynamic interpretation
+    let interpretation = '';
+
+    // Demographic Parity interpretation
+    if (dp.difference < 0.05) {
+        interpretation += `<strong>Demographic Parity</strong> is well-satisfied (difference: ${dp.difference.toFixed(3)}). Both groups receive positive predictions at similar rates (Group A: ${(dp.positive_rate_a * 100).toFixed(1)}%, Group B: ${(dp.positive_rate_b * 100).toFixed(1)}%).`;
+    } else if (dp.difference < 0.15) {
+        interpretation += `<strong>Demographic Parity</strong> shows moderate disparity (difference: ${dp.difference.toFixed(3)}). Group A has a ${(dp.positive_rate_a * 100).toFixed(1)}% positive rate vs Group B's ${(dp.positive_rate_b * 100).toFixed(1)}%. The ratio of ${dp.ratio.toFixed(3)} ${dp.ratio >= 0.8 ? 'satisfies' : 'violates'} the 80% rule.`;
+    } else {
+        interpretation += `<strong>Demographic Parity</strong> is significantly violated (difference: ${dp.difference.toFixed(3)}). There is a substantial gap between Group A (${(dp.positive_rate_a * 100).toFixed(1)}%) and Group B (${(dp.positive_rate_b * 100).toFixed(1)}%). The ratio of ${dp.ratio.toFixed(3)} ${dp.ratio >= 0.8 ? 'satisfies' : '<strong>violates</strong>'} the 80% rule.`;
+    }
+
+    // Equalized Odds interpretation
+    if (eo.max_difference < 0.05) {
+        interpretation += `<br><br><strong>Equalized Odds</strong> is well-satisfied (max difference: ${eo.max_difference.toFixed(3)}). The model makes errors at similar rates for both groups.`;
+    } else if (eo.max_difference < 0.15) {
+        interpretation += `<br><br><strong>Equalized Odds</strong> shows a moderate gap (max difference: ${eo.max_difference.toFixed(3)}). TPR gap: ${(eo.tpr_difference * 100).toFixed(1)}%, FPR gap: ${(eo.fpr_difference * 100).toFixed(1)}%. The model performs differently across groups.`;
+    } else {
+        interpretation += `<br><br><strong>Equalized Odds</strong> is significantly violated (max difference: ${eo.max_difference.toFixed(3)}). The model is substantially less accurate for one group (TPR gap: ${(eo.tpr_difference * 100).toFixed(1)}%, FPR gap: ${(eo.fpr_difference * 100).toFixed(1)}%). This indicates the model's errors disproportionately affect one demographic.`;
+    }
+
+    // Equal Opportunity interpretation
+    if (eop.difference < 0.05) {
+        interpretation += `<br><br><strong>Equal Opportunity</strong> is well-satisfied (TPR difference: ${eop.difference.toFixed(3)}). Qualified individuals are identified at equal rates regardless of group membership.`;
+    } else if (eop.difference < 0.15) {
+        interpretation += `<br><br><strong>Equal Opportunity</strong> shows a moderate gap (TPR difference: ${eop.difference.toFixed(3)}). Group A TPR: ${(eop.tpr_a * 100).toFixed(1)}% vs Group B TPR: ${(eop.tpr_b * 100).toFixed(1)}%. Qualified members of one group are less likely to receive favorable predictions.`;
+    } else {
+        interpretation += `<br><br><strong>Equal Opportunity</strong> is significantly violated (TPR difference: ${eop.difference.toFixed(3)}). Group A TPR: ${(eop.tpr_a * 100).toFixed(1)}% vs Group B TPR: ${(eop.tpr_b * 100).toFixed(1)}%. This is a critical concern for applications like hiring or lending where missing qualified individuals from one group is harmful.`;
+    }
+
+    return `
+    <div id="gf-attr-panel-${idx}" class="gf-attr-panel" style="display: ${display};">
+        <div class="gf-group-info">
+            <span><strong>Group A</strong> (${gf.attribute_name} &le; 0): ${gf.group_a.size} instances</span>
+            <span><strong>Group B</strong> (${gf.attribute_name} &gt; 0): ${gf.group_b.size} instances</span>
+        </div>
+
+        <div class="cards-grid">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-label">Demographic Parity</span>
+                    <span class="card-badge ${dpBadge}">${dpLabel}</span>
+                </div>
+                <div class="card-value">${dp.difference.toFixed(3)}<span class="card-unit">diff</span></div>
+                <div class="card-description">
+                    |P(&#374;=1|A) &minus; P(&#374;=1|B)| &mdash; closer to 0 is fairer.<br>
+                    Group A: ${(dp.positive_rate_a * 100).toFixed(1)}% | Group B: ${(dp.positive_rate_b * 100).toFixed(1)}%
+                </div>
+                <div class="compliance-box ${dp.ratio >= 0.8 ? 'compliance-pass' : 'compliance-fail'}">
+                    <div class="compliance-header">
+                        ${dp.ratio >= 0.8 ? '&#10003; Ratio ' + dp.ratio.toFixed(3) + ' passes 80% rule' : '&#10007; Ratio ' + dp.ratio.toFixed(3) + ' violates 80% rule'}
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-label">Equalized Odds</span>
+                    <span class="card-badge ${eoBadge}">${eoLabel}</span>
+                </div>
+                <div class="card-value">${eo.max_difference.toFixed(3)}<span class="card-unit">max diff</span></div>
+                <div class="card-description">
+                    max(|TPR_A &minus; TPR_B|, |FPR_A &minus; FPR_B|) &mdash; closer to 0 is fairer.<br>
+                    TPR gap: ${(eo.tpr_difference * 100).toFixed(1)}% | FPR gap: ${(eo.fpr_difference * 100).toFixed(1)}%
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-label">Equal Opportunity</span>
+                    <span class="card-badge ${eopBadge}">${eopLabel}</span>
+                </div>
+                <div class="card-value">${eop.difference.toFixed(3)}<span class="card-unit">TPR diff</span></div>
+                <div class="card-description">
+                    |TPR_A &minus; TPR_B| &mdash; closer to 0 is fairer.<br>
+                    Group A TPR: ${(eop.tpr_a * 100).toFixed(1)}% | Group B TPR: ${(eop.tpr_b * 100).toFixed(1)}%
+                </div>
+            </div>
+        </div>
+
+        <div class="chart-container" style="margin-top: 16px;">
+            <div class="chart-title">Per-Group Confusion Matrix Breakdown</div>
+            <table class="gf-table">
+                <thead>
+                    <tr>
+                        <th>Metric</th>
+                        <th style="color: var(--accent-blue);">Group A (&le;0)</th>
+                        <th style="color: var(--accent-orange);">Group B (&gt;0)</th>
+                        <th>Gap</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Positive Prediction Rate</td>
+                        <td>${(dp.positive_rate_a * 100).toFixed(1)}%</td>
+                        <td>${(dp.positive_rate_b * 100).toFixed(1)}%</td>
+                        <td class="${dp.difference > 0.1 ? 'gf-gap-bad' : 'gf-gap-good'}">${(dp.difference * 100).toFixed(1)}%</td>
+                    </tr>
+                    <tr>
+                        <td>True Positive Rate (TPR)</td>
+                        <td>${(eo.tpr_a * 100).toFixed(1)}%</td>
+                        <td>${(eo.tpr_b * 100).toFixed(1)}%</td>
+                        <td class="${eo.tpr_difference > 0.1 ? 'gf-gap-bad' : 'gf-gap-good'}">${(eo.tpr_difference * 100).toFixed(1)}%</td>
+                    </tr>
+                    <tr>
+                        <td>False Positive Rate (FPR)</td>
+                        <td>${(eo.fpr_a * 100).toFixed(1)}%</td>
+                        <td>${(eo.fpr_b * 100).toFixed(1)}%</td>
+                        <td class="${eo.fpr_difference > 0.1 ? 'gf-gap-bad' : 'gf-gap-good'}">${(eo.fpr_difference * 100).toFixed(1)}%</td>
+                    </tr>
+                    <tr>
+                        <td>TP / FP / TN / FN</td>
+                        <td style="font-family: monospace;">${cm.group_a.tp} / ${cm.group_a.fp} / ${cm.group_a.tn} / ${cm.group_a.fn}</td>
+                        <td style="font-family: monospace;">${cm.group_b.tp} / ${cm.group_b.fp} / ${cm.group_b.tn} / ${cm.group_b.fn}</td>
+                        <td>&mdash;</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="interpretation-box" style="margin-top: 16px;">
+            <div class="interpretation-title">${ICONS.lightbulb} Interpretation for "${gf.attribute_name}"</div>
+            <div class="interpretation-content">${interpretation}</div>
         </div>
     </div>`;
 }
@@ -629,6 +1006,20 @@ function buildLimeSection(limeData: LimeData | null, training: TrainingData): st
         }
     }
 
+    const numTest = training.dataset_info?.num_test || 0;
+    const featureNames = limeData.feature_names || [];
+
+    // Build the custom feature input grid
+    const featureInputs = featureNames
+        .map(
+            (name: string, idx: number) => `
+            <div class="lime-input-group">
+                <label title="${name}">${name}</label>
+                <input type="number" id="lime-feature-${idx}" value="0" step="any" />
+            </div>`,
+        )
+        .join('');
+
     return `
     <div class="section">
         <div class="section-header">
@@ -651,6 +1042,52 @@ function buildLimeSection(limeData: LimeData | null, training: TrainingData): st
         <div class="interpretation-box" style="margin-top: 16px;">
             <div class="interpretation-title">${ICONS.lightbulb} LIME Interpretation for This Dataset</div>
             <div class="interpretation-content">${limeInterpretation}</div>
+        </div>
+
+        <!-- Interactive LIME: Per-Instance Explanation -->
+        <div class="lime-interactive">
+            <div class="lime-interactive-title">
+                ${ICONS.search} Explore Individual Instance Explanations
+            </div>
+            <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 16px;">
+                Select a test instance by index or enter custom feature values to generate a LIME explanation for that specific instance.
+            </p>
+
+            <div class="lime-mode-toggle">
+                <button id="lime-mode-index" class="lime-mode-btn active" onclick="toggleLimeMode('index')">Test Instance</button>
+                <button id="lime-mode-custom" class="lime-mode-btn" onclick="toggleLimeMode('custom')">Custom Values</button>
+            </div>
+
+            <!-- Test Instance mode -->
+            <div id="lime-index-section" class="lime-index-input-group">
+                <label for="lime-instance-index">Instance Index:</label>
+                <input type="number" id="lime-instance-index" value="0" min="0" max="${numTest - 1}" step="1" />
+                <span class="lime-index-range">Range: 0 to ${numTest - 1} (${numTest} test instances)</span>
+            </div>
+
+            <!-- Custom Instance mode (hidden by default) -->
+            <div id="lime-custom-section" class="lime-input-grid" style="display: none;">
+                ${featureInputs}
+            </div>
+
+            <button id="lime-generate-btn" class="lime-generate-btn" onclick="generateLimeInstance()">
+                ${ICONS.lightbulb} Generate LIME Explanation
+            </button>
+
+            <div id="lime-instance-loading" class="lime-loading">
+                <div class="lime-spinner"></div>
+                <span>Computing LIME explanation...</span>
+            </div>
+
+            <div id="lime-instance-error" class="lime-error-msg"></div>
+
+            <div id="lime-instance-result" class="lime-result-section">
+                <div id="lime-instance-prediction" class="lime-prediction"></div>
+                <div class="chart-container" style="margin-top: 0;">
+                    <div class="chart-title">Per-Instance LIME Explanation</div>
+                    <div id="lime-instance-chart" style="height: 400px;"></div>
+                </div>
+            </div>
         </div>
     </div>`;
 }
