@@ -365,6 +365,10 @@ async def train_model(request: TrainRequest):
                 "final_train_acc": history["train_accuracies"][-1],
                 "final_val_acc": history["val_accuracies"][-1],
                 "epochs_trained": len(history["train_losses"]),
+                "train_losses": history["train_losses"],
+                "val_losses": history["val_losses"],
+                "train_accuracies": history["train_accuracies"],
+                "val_accuracies": history["val_accuracies"],
             },
             "dataset_info": {
                 "num_features": data_info["input_dim"],

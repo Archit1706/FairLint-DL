@@ -276,6 +276,8 @@ class QIDAnalyzer:
             "num_violating_80_rule": int(
                 sum(1 for di in disparate_impacts if di < 0.8)
             ),
+            "per_instance_qid": [float(q) for q in shannon_qids],
+            "per_instance_disparate_impact": [float(d) for d in disparate_impacts],
         }
 
 
