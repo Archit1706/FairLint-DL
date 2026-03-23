@@ -2,7 +2,7 @@
     "name": "fairlint-dl",
     "displayName": "FairLint-DL",
     "description": "Deep Learning-based fairness debugging for ML datasets using PyTorch and information-theoretic analysis (DICE/NeuFair inspired)",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "preview": true,
     "serverInfo": {
         "name": "FairLint-DL",
