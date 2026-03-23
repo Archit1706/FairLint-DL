@@ -1,3 +1,4 @@
+# VS Code / dev tooling
 .vscode/**
 .vscode-test/**
 out/**
@@ -10,16 +11,46 @@ vsc-extension-quickstart.md
 **/tsconfig.json
 **/.eslintrc.json
 **/*.ts
+
+# Python dev environment / virtual envs
 .venv/**
 .nox/**
-.github/
+**/venv/**
+**/venv*/**
 **/__pycache__/**
 **/*.pyc
-bundled/libs/bin/**
-bundled/libs/*.dist-info/**
-noxfile.py
 .pytest_cache/**
 .pylintrc
-**/requirements.txt
+.ruff_cache/**
+
+# Bundled lib internals
+bundled/libs/bin/**
+bundled/libs/*.dist-info/**
+
+# Dev config files
+noxfile.py
 **/requirements.in
+runtime.txt
 **/tool/_debug_server.py
+
+# Non-extension directories
+papers/**
+report/**
+.claude/**
+.fairlint_cache/**
+
+# Documentation (working doc, not needed in VSIX)
+working.md
+
+# Icon source (PNG is included, SVG is source only)
+icon.svg
+
+# Package lock (not needed in VSIX)
+package-lock.json
+
+# Data files
+*.csv
+**/*.csv
+
+# Build artifacts
+*.vsix

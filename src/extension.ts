@@ -27,7 +27,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     );
 }
 
-async function analyzeDataset(uri: vscode.Uri, forceRetrain: boolean = false): Promise<void> {
+async function analyzeDataset(uri: vscode.Uri | undefined, forceRetrain: boolean = false): Promise<void> {
+    if (!uri) {
+        const picked = await vscode.window.showOpenDialog({
+            canSelectMany: false,
+            filters: { 'CSV Files': ['csv'] },
+            openLabel: 'Select CSV Dataset',
+        });
+        if (!picked || picked.length === 0) {
+            return;
+        }
+        uri = picked[0];
+    }
     const filePath = uri.fsPath;
 
     if (!filePath.endsWith('.csv')) {

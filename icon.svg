@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a365d"/>
+      <stop offset="100%" style="stop-color:#2d5a8e"/>
+    </linearGradient>
+    <linearGradient id="scale" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" style="stop-color:#4caf50"/>
+      <stop offset="50%" style="stop-color:#ff9800"/>
+      <stop offset="100%" style="stop-color:#f44336"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background rounded square -->
+  <rect x="4" y="4" width="120" height="120" rx="20" ry="20" fill="url(#bg)"/>
+
+  <!-- Balance scale base -->
+  <line x1="64" y1="38" x2="64" y2="95" stroke="#e0e0e0" stroke-width="3.5" stroke-linecap="round"/>
+  <rect x="48" y="93" width="32" height="6" rx="3" fill="#e0e0e0"/>
+
+  <!-- Scale beam -->
+  <line x1="28" y1="52" x2="100" y2="48" stroke="url(#scale)" stroke-width="3.5" stroke-linecap="round"/>
+
+  <!-- Left pan -->
+  <line x1="28" y1="52" x2="22" y2="70" stroke="#b0bec5" stroke-width="2"/>
+  <line x1="28" y1="52" x2="34" y2="70" stroke="#b0bec5" stroke-width="2"/>
+  <path d="M18 70 Q28 78 38 70" stroke="#b0bec5" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+
+  <!-- Right pan -->
+  <line x1="100" y1="48" x2="94" y2="66" stroke="#b0bec5" stroke-width="2"/>
+  <line x1="100" y1="48" x2="106" y2="66" stroke="#b0bec5" stroke-width="2"/>
+  <path d="M90 66 Q100 74 110 66" stroke="#b0bec5" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+
+  <!-- Neural network nodes on left pan -->
+  <circle cx="25" cy="67" r="3" fill="#64b5f6"/>
+  <circle cx="31" cy="67" r="3" fill="#64b5f6"/>
+  <circle cx="28" cy="62" r="3" fill="#64b5f6"/>
+
+  <!-- Neural network nodes on right pan -->
+  <circle cx="97" cy="63" r="3" fill="#ffb74d"/>
+  <circle cx="103" cy="63" r="3" fill="#ffb74d"/>
+  <circle cx="100" cy="58" r="3" fill="#ffb74d"/>
+
+  <!-- Shield / check mark at top -->
+  <path d="M64 22 L72 26 L72 34 Q72 40 64 44 Q56 40 56 34 L56 26 Z" fill="none" stroke="#4caf50" stroke-width="2.5"/>
+  <polyline points="59,33 63,37 70,29" fill="none" stroke="#4caf50" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- DL text -->
+  <text x="64" y="88" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#90caf9">DL</text>
+</svg>

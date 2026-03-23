@@ -54,6 +54,24 @@ export async function startBackend(context: vscode.ExtensionContext): Promise<vo
 
     console.log(`Starting backend at: ${backendPath} on port ${serverPort}`);
     console.log(`Using Python: ${pythonPath}`);
+
+    // Check that python_backend directory exists
+    if (!fs.existsSync(backendPath)) {
+        setStatusBarError('Backend not found');
+        showError(
+            'Backend Not Found',
+            `The python_backend directory was not found at:\n${backendPath}\n\n` +
+                'This may indicate a packaging issue. Please reinstall the extension.',
+        );
+        return;
+    }
+
+    // Check requirements.txt exists and suggest install
+    const requirementsPath = path.join(backendPath, 'requirements.txt');
+    if (fs.existsSync(requirementsPath)) {
+        console.log(`Requirements file found at: ${requirementsPath}`);
+    }
+
     updateStatusBar('$(sync~spin) Starting server...', 'Initializing Python backend');
 
     serverProcess = spawn(pythonPath, ['-m', 'uvicorn', 'bias_server:app', '--port', String(serverPort)], {
@@ -68,7 +86,23 @@ export async function startBackend(context: vscode.ExtensionContext): Promise<vo
     serverProcess.stderr?.on('data', (data) => {
         const msg = data.toString();
         // Uvicorn logs to stderr by default, so not all stderr is errors
-        if (msg.includes('ERROR') || msg.includes('ModuleNotFoundError') || msg.includes('Traceback')) {
+        if (msg.includes('ModuleNotFoundError')) {
+            console.error(`Backend ERROR: ${msg}`);
+            const match = msg.match(/No module named '([^']+)'/);
+            const moduleName = match ? match[1] : 'unknown';
+            vscode.window
+                .showErrorMessage(
+                    `Missing Python module: ${moduleName}. Install backend dependencies?`,
+                    'Install Dependencies',
+                )
+                .then((choice) => {
+                    if (choice === 'Install Dependencies') {
+                        const terminal = vscode.window.createTerminal('FairLint-DL Setup');
+                        terminal.show();
+                        terminal.sendText(`pip install -r "${path.join(backendPath, 'requirements.txt')}"`);
+                    }
+                });
+        } else if (msg.includes('ERROR') || msg.includes('Traceback')) {
             console.error(`Backend ERROR: ${msg}`);
         } else {
             console.log(`Backend: ${msg}`);
@@ -135,13 +169,27 @@ export async function startBackend(context: vscode.ExtensionContext): Promise<vo
             }
 
             setStatusBarError('Server failed');
-            showError(
-                'Server Startup Failed',
-                'The backend server failed to start. Please check:\n' +
+
+            const requirementsFile = path.join(backendPath, 'requirements.txt');
+            const installAction = 'Install Dependencies';
+            const retryAction = 'Retry';
+            const choice = await vscode.window.showErrorMessage(
+                'Server Startup Failed: The backend server failed to start. Please check:\n' +
                     '1. Python 3.8+ is installed\n' +
-                    '2. Required packages are installed (pip install -r requirements.txt)\n' +
+                    '2. Required packages are installed\n' +
                     `3. Port ${serverPort} is not in use`,
+                installAction,
+                retryAction,
             );
+
+            if (choice === installAction) {
+                const terminal = vscode.window.createTerminal('FairLint-DL Setup');
+                terminal.show();
+                terminal.sendText(`pip install -r "${requirementsFile}"`);
+            } else if (choice === retryAction) {
+                stopBackend();
+                await startBackend(context);
+            }
         },
     );
 }
