@@ -166,109 +166,161 @@ On-demand per-instance LIME explanations via the `/explain-instance` endpoint:
 
 ## Installation
 
-### Prerequisites
+### Step 1: Install the Extension
 
--   **VS Code** 1.78.0 or higher
--   **Python** 3.9+ with `pip`
--   **Node.js** 16.x+ (for building from source)
+Install **FairLint-DL** directly from the VS Code Marketplace:
 
-### Setup Steps
+1.  Open VS Code
+2.  Go to the **Extensions** panel (`Ctrl+Shift+X`)
+3.  Search for **"FairLint-DL"**
+4.  Click **Install**
 
-1.  **Install Python Dependencies**:
+Or install via the command line:
 
-    ```bash
-    cd python_backend
-    pip install -r requirements.txt
-    ```
-
-    _Dependencies: PyTorch, FastAPI, Uvicorn, Pandas, Scikit-learn, SciPy, SHAP, LIME._
-
-2.  **Install Node Dependencies**:
-
-    ```bash
-    npm install
-    ```
-
-3.  **Build Extension**:
-
-    ```bash
-    npm run compile
-    ```
-
-4.  **Run in Debug Mode**:
-    Press `F5` in VS Code to launch the Extension Development Host.
-
----
-
-## Usage Guide
-
-1.  **Open Dataset**: Open a CSV file in VS Code.
-2.  **Start Analysis**: Right-click the file and select **"FairLint-DL: Analyze This Dataset"** (uses cached model if available) or **"FairLint-DL: Analyze Dataset (Force Retrain)"** to train a fresh model.
-3.  **Configure**:
-    -   Select the **Label Column** (target variable).
-    -   Select **Protected Attributes** (e.g., gender, race — often auto-detected).
-    -   Choose **Model Architecture** (Default, Wide, Deep, or Custom).
-4.  **Review Results**:
-    -   **Fairness Score**: Composite 0–100 score combining individual and group metrics.
-    -   **QID Metrics**: Mean/Max QID, disparate impact, and per-instance discrimination analysis.
-    -   **Group Fairness**: Demographic Parity, Equalized Odds, and Equal Opportunity per protected attribute.
-    -   **Causal Debugging**: Layer and neuron sensitivity analysis.
-    -   **SHAP & LIME**: Global and local feature importance, with interactive per-instance LIME exploration.
-    -   **Export**: Download all results as structured JSON.
-
----
-
-## Project Structure
-
-```
-fairlint-dl/
-├── .vscode/               # VS Code launch configurations
-├── python_backend/        # Analysis Server
-│   ├── analyzers/         # Core Algorithmic Logic
-│   │   ├── causal_debugger.py    # Layer/Neuron attribution
-│   │   ├── qid_analyzer.py       # Entropy-based metrics
-│   │   ├── search.py             # Gradient-guided search
-│   │   ├── explainability.py     # SHAP and LIME explanations
-│   │   ├── group_fairness.py     # Demographic Parity, Equalized Odds, Equal Opportunity
-│   │   └── internal_space.py     # PCA/t-SNE activation visualization
-│   ├── models/            # PyTorch Model Definitions
-│   │   └── fairness_dnn.py
-│   ├── utils/             # Data Processing & Caching
-│   │   ├── data_loader.py        # CSV loading, encoding, scaling, splitting
-│   │   └── model_cache.py        # SHA-256 model caching system
-│   ├── bias_server.py     # FastAPI Entry Point
-│   └── requirements.txt   # Python Dependencies
-├── src/                   # VS Code Extension Source
-│   ├── extension.ts       # Main Extension Entry Point
-│   ├── analysis/
-│   │   ├── columns.ts     # CSV column fetching
-│   │   └── pipeline.ts    # 6-step analysis pipeline orchestration
-│   └── webview/
-│       ├── results.ts     # WebviewPanel creation, message handling
-│       ├── htmlBuilder.ts # HTML section builders with dynamic interpretations
-│       ├── charts.ts      # Plotly.js chart rendering
-│       ├── scoring.ts     # Composite fairness score calculation
-│       ├── styles.ts      # CSS styles
-│       └── types.ts       # Shared TypeScript interfaces
-├── package.json           # Extension Manifest
-└── README.md              # Documentation
+```bash
+code --install-extension ArchitRathod.fairlint-dl
 ```
 
+### Step 2: Install Python Dependencies
+
+FairLint-DL requires **Python 3.9+** installed on your system. The extension bundles the backend code, but you need to install the Python packages:
+
+```bash
+pip install torch fastapi uvicorn pandas numpy scikit-learn scipy lime shap
+```
+
+> **Tip:** If you use a virtual environment, make sure VS Code is configured to use the correct Python interpreter (`Ctrl+Shift+P` → `Python: Select Interpreter`).
+
+### Step 3: Verify Setup
+
+1.  Open any `.csv` file in VS Code
+2.  Right-click the file in the Explorer
+3.  You should see **"FairLint-DL: Analyze This Dataset"** in the context menu
+
+If the backend server fails to start, check that:
+-   Python 3.9+ is installed and accessible from your terminal
+-   All required Python packages are installed
+-   Port 8765 is not in use by another application
+
 ---
 
-## API Reference (Local Server)
+## Quick Start Guide
 
-When the extension runs, it starts a local server at `http://localhost:8765`.
+### 1. Prepare Your Dataset
 
--   `GET /`: Health check endpoint.
--   `POST /columns`: Returns column names, sample data, and auto-detected sensitive features from a CSV.
--   `POST /train`: Trains the proxy model (or loads from cache if available). Supports `force_retrain` flag.
--   `POST /activations`: Returns PCA/t-SNE reduced layer activations for internal space visualization.
--   `POST /analyze`: Computes bulk QID metrics and group fairness metrics (Demographic Parity, Equalized Odds, Equal Opportunity).
--   `POST /search`: Runs the global/local search for discriminatory instances.
--   `POST /debug`: Performs layer and neuron sensitivity analysis.
--   `POST /explain`: Generates batch SHAP/LIME explanations.
--   `POST /explain-instance`: Generates a single-instance LIME explanation (by test index or custom feature values).
+FairLint-DL works with **CSV files** containing tabular data. Your dataset should have:
+-   A **label/target column** (binary classification — e.g., `income`, `hired`, `approved`)
+-   One or more **protected/sensitive attributes** (e.g., `gender`, `race`, `age`)
+
+### 2. Launch the Analysis
+
+There are two ways to start:
+
+| Method | How | When to Use |
+|--------|-----|-------------|
+| **Analyze Dataset** | Right-click CSV → **"FairLint-DL: Analyze This Dataset"** | First analysis or when using cached results |
+| **Force Retrain** | Right-click CSV → **"FairLint-DL: Analyze Dataset (Force Retrain)"** | When you want to retrain the model from scratch |
+
+### 3. Configure the Analysis
+
+After launching, you'll be prompted to configure three things:
+
+1.  **Label Column** — Select the target variable your model predicts (e.g., `income >50K`)
+2.  **Protected Attributes** — Select one or more sensitive features to test for bias (e.g., `sex`, `race`). Common sensitive attributes are auto-detected.
+3.  **Model Architecture** — Choose the DNN architecture:
+    -   🏗️ **Default** (64→32→16→8→4) — Balanced, works well for most datasets
+    -   📐 **Wide** (128→64→32) — Better for datasets with many features
+    -   📏 **Deep** (64→48→32→24→16→8→4) — Better for complex relationships
+    -   ⚙️ **Custom** — Define your own layer sizes
+
+### 4. Wait for Training
+
+The extension will:
+1.  Start the Python backend server automatically
+2.  Send your dataset for preprocessing
+3.  Train a proxy DNN model (or load from cache if previously trained)
+4.  Run the full 6-step fairness analysis pipeline
+
+> **Note:** First-time training may take 30–90 seconds depending on dataset size. Subsequent runs with the same configuration use cached models and complete in under 1 second.
+
+### 5. Review the Results Dashboard
+
+Once analysis completes, an interactive dashboard opens with the following sections:
+
+#### 🎯 Fairness Score (0–100)
+A composite score combining individual and group fairness metrics. Higher is fairer.
+-   **90–100**: Low bias detected
+-   **70–89**: Moderate bias — review recommended
+-   **Below 70**: Significant bias — action needed
+
+#### 📊 QID Analysis (Individual Fairness)
+-   **Mean/Max QID**: How much the protected attribute influences predictions on average and at worst
+-   **Disparate Impact Ratio**: Whether the 80% rule is satisfied (legal threshold in hiring)
+-   **QID Distribution Chart**: Histogram showing per-instance discrimination levels
+
+#### 👥 Group Fairness Metrics
+-   **Demographic Parity**: Are positive predictions given at equal rates across groups?
+-   **Equalized Odds**: Are error rates (TPR/FPR) balanced across groups?
+-   **Equal Opportunity**: Are qualified individuals identified equally regardless of group?
+-   Interactive charts with per-attribute switching
+
+#### 🔍 Causal Debugging
+-   **Layer Sensitivity**: Which network layers amplify bias the most
+-   **Neuron Analysis**: Specific neurons encoding protected information
+-   Helps understand *where* in the model bias is introduced
+
+#### 🧪 Discriminatory Instance Search
+-   Concrete examples of inputs where the model discriminates
+-   Found via gradient-guided search (global) + perturbation (local)
+
+#### 📈 Explainability (SHAP & LIME)
+-   **SHAP**: Global feature importance — which features drive predictions overall
+-   **LIME**: Local explanations — why the model made a specific decision
+-   **Interactive LIME Explorer**: Select any test instance or enter custom feature values for "what-if" analysis
+
+### 6. Export Results
+
+Click the **"Export Results"** button at the bottom of the dashboard to download all analysis results as a structured JSON file.
+
+---
+
+## Extension Settings
+
+Configure FairLint-DL via VS Code Settings (`Ctrl+,` → search "fairlint"):
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `fairlint-dl.pythonPath` | `python` | Path to Python interpreter |
+| `fairlint-dl.serverPort` | `8765` | Port for the analysis backend server |
+| `fairlint-dl.defaultEpochs` | `50` | Default training epochs |
+| `fairlint-dl.defaultBatchSize` | `32` | Default training batch size |
+| `fairlint-dl.autoDetectSensitiveFeatures` | `true` | Auto-detect protected attributes |
+
+---
+
+## Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| **Server Startup Failed** | Ensure Python 3.9+ is installed and packages are installed via `pip install torch fastapi uvicorn pandas numpy scikit-learn scipy lime shap` |
+| **Cannot connect to analysis server** | Restart VS Code, or check if port 8765 is already in use (`lsof -i :8765` on Mac/Linux, `netstat -ano | findstr 8765` on Windows) |
+| **Training is slow** | Reduce epochs in settings, or use a smaller dataset. Cached models load instantly on repeat runs. |
+| **Charts not rendering** | Ensure you're not blocking CDN resources — Plotly.js is loaded from CDN in the webview |
+
+---
+
+## How It Works
+
+FairLint-DL uses a **6-step analysis pipeline**:
+
+1.  **Train** — A proxy DNN model learns the patterns in your dataset
+2.  **Activations** — Internal layer activations are extracted and visualized via PCA/t-SNE
+3.  **QID Analysis** — Information-theoretic metrics quantify how much protected attributes influence predictions
+4.  **Search** — Gradient-guided search finds concrete discriminatory instances
+5.  **Debug** — Causal analysis localizes bias to specific layers and neurons
+6.  **Explain** — SHAP and LIME provide global and local feature importance explanations
+
+The extension runs a local FastAPI server (`localhost:8765`) that handles all computation. The server starts automatically when you trigger an analysis and shuts down when VS Code closes.
 
 ---
 
