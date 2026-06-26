@@ -56,6 +56,8 @@ The system operates as a client-server architecture:
 1.  **VS Code Extension (Client)**: Written in TypeScript. It handles UI interactions, file system access, and manages the lifecycle of the Python backend.
 2.  **Analysis Server (Backend)**: A FastAPI server running locally. It hosts the PyTorch models and analysis algorithms.
 
+![FairLintDL Architecture](architecture.png)
+
 ### Communication Flow
 
 1.  User triggers analysis on a CSV file.
@@ -198,6 +200,7 @@ pip install torch fastapi uvicorn pandas numpy scikit-learn scipy lime shap
 3.  You should see **"FairLint-DL: Analyze This Dataset"** in the context menu
 
 If the backend server fails to start, check that:
+
 -   Python 3.9+ is installed and accessible from your terminal
 -   All required Python packages are installed
 -   Port 8765 is not in use by another application
@@ -209,6 +212,7 @@ If the backend server fails to start, check that:
 ### 1. Prepare Your Dataset
 
 FairLint-DL works with **CSV files** containing tabular data. Your dataset should have:
+
 -   A **label/target column** (binary classification — e.g., `income`, `hired`, `approved`)
 -   One or more **protected/sensitive attributes** (e.g., `gender`, `race`, `age`)
 
@@ -216,10 +220,10 @@ FairLint-DL works with **CSV files** containing tabular data. Your dataset shoul
 
 There are two ways to start:
 
-| Method | How | When to Use |
-|--------|-----|-------------|
-| **Analyze Dataset** | Right-click CSV → **"FairLint-DL: Analyze This Dataset"** | First analysis or when using cached results |
-| **Force Retrain** | Right-click CSV → **"FairLint-DL: Analyze Dataset (Force Retrain)"** | When you want to retrain the model from scratch |
+| Method              | How                                                                  | When to Use                                     |
+| ------------------- | -------------------------------------------------------------------- | ----------------------------------------------- |
+| **Analyze Dataset** | Right-click CSV → **"FairLint-DL: Analyze This Dataset"**            | First analysis or when using cached results     |
+| **Force Retrain**   | Right-click CSV → **"FairLint-DL: Analyze Dataset (Force Retrain)"** | When you want to retrain the model from scratch |
 
 ### 3. Configure the Analysis
 
@@ -236,6 +240,7 @@ After launching, you'll be prompted to configure three things:
 ### 4. Wait for Training
 
 The extension will:
+
 1.  Start the Python backend server automatically
 2.  Send your dataset for preprocessing
 3.  Train a proxy DNN model (or load from cache if previously trained)
@@ -248,32 +253,39 @@ The extension will:
 Once analysis completes, an interactive dashboard opens with the following sections:
 
 #### 🎯 Fairness Score (0–100)
+
 A composite score combining individual and group fairness metrics. Higher is fairer.
+
 -   **90–100**: Low bias detected
 -   **70–89**: Moderate bias — review recommended
 -   **Below 70**: Significant bias — action needed
 
 #### 📊 QID Analysis (Individual Fairness)
+
 -   **Mean/Max QID**: How much the protected attribute influences predictions on average and at worst
 -   **Disparate Impact Ratio**: Whether the 80% rule is satisfied (legal threshold in hiring)
 -   **QID Distribution Chart**: Histogram showing per-instance discrimination levels
 
 #### 👥 Group Fairness Metrics
+
 -   **Demographic Parity**: Are positive predictions given at equal rates across groups?
 -   **Equalized Odds**: Are error rates (TPR/FPR) balanced across groups?
 -   **Equal Opportunity**: Are qualified individuals identified equally regardless of group?
 -   Interactive charts with per-attribute switching
 
 #### 🔍 Causal Debugging
+
 -   **Layer Sensitivity**: Which network layers amplify bias the most
 -   **Neuron Analysis**: Specific neurons encoding protected information
--   Helps understand *where* in the model bias is introduced
+-   Helps understand _where_ in the model bias is introduced
 
 #### 🧪 Discriminatory Instance Search
+
 -   Concrete examples of inputs where the model discriminates
 -   Found via gradient-guided search (global) + perturbation (local)
 
 #### 📈 Explainability (SHAP & LIME)
+
 -   **SHAP**: Global feature importance — which features drive predictions overall
 -   **LIME**: Local explanations — why the model made a specific decision
 -   **Interactive LIME Explorer**: Select any test instance or enter custom feature values for "what-if" analysis
@@ -288,24 +300,24 @@ Click the **"Export Results"** button at the bottom of the dashboard to download
 
 Configure FairLint-DL via VS Code Settings (`Ctrl+,` → search "fairlint"):
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `fairlint-dl.pythonPath` | `python` | Path to Python interpreter |
-| `fairlint-dl.serverPort` | `8765` | Port for the analysis backend server |
-| `fairlint-dl.defaultEpochs` | `50` | Default training epochs |
-| `fairlint-dl.defaultBatchSize` | `32` | Default training batch size |
-| `fairlint-dl.autoDetectSensitiveFeatures` | `true` | Auto-detect protected attributes |
+| Setting                                   | Default  | Description                          |
+| ----------------------------------------- | -------- | ------------------------------------ |
+| `fairlint-dl.pythonPath`                  | `python` | Path to Python interpreter           |
+| `fairlint-dl.serverPort`                  | `8765`   | Port for the analysis backend server |
+| `fairlint-dl.defaultEpochs`               | `50`     | Default training epochs              |
+| `fairlint-dl.defaultBatchSize`            | `32`     | Default training batch size          |
+| `fairlint-dl.autoDetectSensitiveFeatures` | `true`   | Auto-detect protected attributes     |
 
 ---
 
 ## Troubleshooting
 
-| Problem | Solution |
-|---------|----------|
-| **Server Startup Failed** | Ensure Python 3.9+ is installed and packages are installed via `pip install torch fastapi uvicorn pandas numpy scikit-learn scipy lime shap` |
-| **Cannot connect to analysis server** | Restart VS Code, or check if port 8765 is already in use (`lsof -i :8765` on Mac/Linux, `netstat -ano | findstr 8765` on Windows) |
-| **Training is slow** | Reduce epochs in settings, or use a smaller dataset. Cached models load instantly on repeat runs. |
-| **Charts not rendering** | Ensure you're not blocking CDN resources — Plotly.js is loaded from CDN in the webview |
+| Problem                               | Solution                                                                                                                                     |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| **Server Startup Failed**             | Ensure Python 3.9+ is installed and packages are installed via `pip install torch fastapi uvicorn pandas numpy scikit-learn scipy lime shap` |
+| **Cannot connect to analysis server** | Restart VS Code, or check if port 8765 is already in use (`lsof -i :8765` on Mac/Linux, `netstat -ano                                        | findstr 8765` on Windows) |
+| **Training is slow**                  | Reduce epochs in settings, or use a smaller dataset. Cached models load instantly on repeat runs.                                            |
+| **Charts not rendering**              | Ensure you're not blocking CDN resources — Plotly.js is loaded from CDN in the webview                                                       |
 
 ---
 
