@@ -2,7 +2,7 @@
     "name": "fairlint-dl",
     "displayName": "FairLint-DL",
     "description": "Deep Learning-based fairness debugging for ML datasets using PyTorch and information-theoretic analysis (DICE/NeuFair inspired)",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "preview": true,
     "serverInfo": {
         "name": "FairLint-DL",
@@ -11,13 +11,13 @@
     "publisher": "ArchitRathod",
     "icon": "icon.png",
     "license": "MIT",
-    "homepage": "https://github.com/Archit1706/bias-fairness-dl-extension",
+    "homepage": "https://github.com/Archit1706/FairLint-DL",
     "repository": {
         "type": "git",
-        "url": "https://github.com/Archit1706/bias-fairness-dl-extension.git"
+        "url": "https://github.com/Archit1706/FairLint-DL.git"
     },
     "bugs": {
-        "url": "https://github.com/Archit1706/bias-fairness-dl-extension/issues"
+        "url": "https://github.com/Archit1706/FairLint-DL/issues"
     },
     "galleryBanner": {
         "color": "#1e415e",
@@ -54,8 +54,9 @@
         }
     },
     "activationEvents": [
-        "onLanguage:python",
-        "workspaceContains:*.py"
+        "onCommand:fairlint-dl.analyzeDataset",
+        "onCommand:fairlint-dl.analyzeFromMenu",
+        "onCommand:fairlint-dl.forceRetrain"
     ],
     "main": "./dist/extension.js",
     "scripts": {
@@ -65,7 +66,9 @@
         "package": "webpack --mode production --devtool source-map --config ./webpack.config.js",
         "compile-tests": "tsc -p . --outDir out",
         "watch-tests": "tsc -p . -w --outDir out",
-        "pretest": "npm run compile-tests && npm run compile && npm run lint",
+        "pretest": "npm run compile-tests && npm run lint",
+        "test": "node --test \"out/test/**/*.test.js\"",
+        "test:backend": "python -m pytest python_backend/tests/ -q",
         "lint": "eslint src --ext ts",
         "format-check": "prettier --check 'src/**/*.ts' 'build/**/*.yml' '.github/**/*.yml'",
         "vsce-package": "vsce package -o fairlint-dl.vsix"
