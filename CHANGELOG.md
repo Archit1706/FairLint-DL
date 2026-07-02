@@ -2,6 +2,11 @@
 
 All notable changes to the "FairLint-DL" extension will be documented in this file.
 
+## [1.0.3] - 2026-07-02
+
+### Changed
+- Optimized `architecture.png` (11255x5735, 36 MB to 2000x1019, 0.27 MB), shrinking the packaged extension from ~34 MB to ~1 MB with no visible quality loss.
+
 ## [1.0.2] - 2026-07-02
 
 ### Added
