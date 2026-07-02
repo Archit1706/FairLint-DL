@@ -39,13 +39,15 @@ This exercises QID computation, discriminatory-instance search, causal debugging
 
 ## Step-by-Step: Reproducing the Paper
 
-### Reproduce Table 2 (about 2–4 minutes on CPU)
+### Reproduce the fairness results (about 2–4 minutes on CPU)
 ```bash
 cd python_backend
 python reproduce.py            # all three datasets
 python reproduce.py --quick    # Adult + German only (faster)
 ```
-This reads the bundled datasets in `python_backend/datasets/` (Adult Census, German Credit, Bank Marketing), runs the exact backend pipeline the extension uses, and prints a table plus writes `reproduce_results.json`. Compare the printed table against **Table 2** in the paper.
+This reads the bundled datasets in `python_backend/datasets/`, runs the exact backend pipeline the extension uses, and prints a table plus writes `reproduce_results.json`.
+
+**Note on paper versions.** The *accepted* version of the paper reports the individual-discrimination results for the **Adult Census** dataset (Table 2). The camera-ready revision extends this evaluation to **German Credit** and **Bank Marketing** and adds group-fairness rows. This script covers all three so it matches both versions: use the **Adult** column to check the accepted paper's Table 2, and the German/Bank columns for the extended evaluation.
 
 Expected (seeded) output:
 
@@ -62,7 +64,8 @@ Expected (seeded) output:
 | Composite score | 43 | 46 | 75 |
 
 ### Claims supported by this artifact
-- **Individual discrimination varies widely across datasets** (Table 2): German Credit most severe (mean QID 0.935, ~100% discriminatory), Bank Marketing mildest (0.284, 51.6%). Reproduced exactly by `reproduce.py`.
+- **Adult Census (accepted paper, Table 2): pervasive individual discrimination.** `reproduce.py` yields mean QID ~0.601 and ~98.6% discriminatory instances, supporting the paper's claim (reported as 0.619 / 96.0%; see the caveat below).
+- **Extended evaluation (camera-ready revision): discrimination varies widely across datasets.** German Credit is most severe (mean QID 0.935, ~100% discriminatory), Bank Marketing mildest (0.284, 51.6%). Reproduced exactly.
 - **Individual vs. group divergence on German Credit**: nearly all instances individually discriminatory while the aggregate disparate-impact ratio (0.939) satisfies the four-fifths rule. Reproduced.
 - **The full six-step pipeline runs end-to-end** (QID, search, debugging, group fairness, SHAP/LIME). Exercised by the test suite and `reproduce.py`.
 
