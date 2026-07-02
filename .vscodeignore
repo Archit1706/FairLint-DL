@@ -23,19 +23,15 @@ vsc-extension-quickstart.md
 .pylintrc
 .ruff_cache/**
 
-# Bundled lib internals
-bundled/libs/bin/**
-bundled/libs/*.dist-info/**
-
 # Dev config files
-noxfile.py
 **/requirements.in
 runtime.txt
-**/tool/_debug_server.py
 
 # Non-extension directories
+paper/**
 papers/**
 report/**
+python_backend/tests/**
 .claude/**
 .fairlint_cache/**
 
