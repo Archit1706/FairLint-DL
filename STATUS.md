@@ -5,7 +5,7 @@ We are applying for the following ACM artifact badges:
 ## Artifacts Available
 The artifact is archived on Zenodo with a permanent DOI and released under the MIT license (see `LICENSE`), ensuring public, long-term availability.
 
-- Zenodo DOI: **<INSERT ZENODO DOI HERE>**
+- Zenodo DOI: **https://doi.org/10.5281/zenodo.21142733**
 - Source repository: https://github.com/Archit1706/FairLint-DL
 - Published extension: https://marketplace.visualstudio.com/items?itemName=ArchitRathod.fairlint-dl and https://open-vsx.org/extension/ArchitRathod/fairlint-dl
 

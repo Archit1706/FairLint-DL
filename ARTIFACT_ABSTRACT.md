@@ -4,7 +4,7 @@
 FairLint-DL: An IDE-Native Tool for Fairness Debugging of Deep Learning Software (ASE 2026, Tools and Datasets track).
 
 ## Link to the accepted paper
-The accepted paper (PDF) is included in the archived artifact deposit and available at: **<INSERT ZENODO DOI / PAPER LINK HERE>**
+The accepted paper (PDF) is included in the archived artifact deposit and available at: **https://doi.org/10.5281/zenodo.21142733**
 
 ## Purpose
 FairLint-DL is an editor-native extension (VS Code / Cursor / Antigravity) with a Python FastAPI + PyTorch backend that performs pre-training fairness analysis of tabular datasets. It trains a proxy deep neural network, computes information-theoretic Quantitative Individual Discrimination (QID) metrics, performs a two-phase gradient-guided search for discriminatory instances, localizes bias to specific layers and neurons via causal debugging, computes group-fairness metrics (demographic parity, equalized odds, equal opportunity), and produces SHAP and LIME explanations. The artifact lets reviewers install the backend, run an automated test suite, and reproduce the paper's Table 2 offline from bundled datasets.
@@ -18,7 +18,7 @@ We apply for **Artifacts Available** and **Artifacts Reusable**.
 Basic command-line and Python familiarity. **CPU only; no GPU required.** ~2 GB disk, ~4 GB RAM. Python 3.9+. Optional Node.js 18+ and a VS Code-compatible editor to exercise the UI. No network access needed for evaluation.
 
 ## Provenance
-- Archival deposit (DOI): **<INSERT ZENODO DOI HERE>**
+- Archival deposit (DOI): **https://doi.org/10.5281/zenodo.21142733**
 - Source repository: https://github.com/Archit1706/FairLint-DL
 - Published extension: https://marketplace.visualstudio.com/items?itemName=ArchitRathod.fairlint-dl and https://open-vsx.org/extension/ArchitRathod/fairlint-dl
 - Demo video: https://youtu.be/AmfpjK24uwY
