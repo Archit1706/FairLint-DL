@@ -2,6 +2,20 @@
 
 All notable changes to the "FairLint-DL" extension will be documented in this file.
 
+## [1.0.2] - 2026-07-02
+
+### Added
+- Automated test suite for the Python backend: 19 unit tests covering QID (Shannon and min-entropy / disparate impact), discriminatory-instance search, causal layer/neuron localization, group-fairness metrics, internal-space PCA, SHAP and LIME explainers, model-cache key determinism, data preprocessing, and the REST endpoints. Runnable with `pytest` or standalone (`python tests/test_backend.py`).
+- TypeScript unit tests for the composite fairness-score logic (`npm test`, Node built-in test runner).
+- `python_backend/requirements-test.txt` (pytest, httpx) and `npm test` / `npm run test:backend` scripts.
+- Evaluation on three tabular benchmarks (Adult Census, German Credit, Bank Marketing); results documented in the README.
+
+### Changed
+- Documented multi-IDE support: the extension is published on Open VSX and runs unmodified in any VS Code-compatible IDE, including Cursor and Antigravity.
+
+### Removed
+- Dead code inherited from the Microsoft `vscode-python-tools-extension-template`: the LSP language-server scaffolding (`src/common/`, `bundled/tool/lsp_*.py`), the leftover LSP test harness (`src/test/python_tests/`), and `noxfile.py`. These were unused by the live extension; removing them has no effect on features.
+
 ## [1.0.0] - 2026-03-10
 
 ### Added
