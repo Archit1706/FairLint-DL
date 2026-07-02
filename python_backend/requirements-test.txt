@@ -1,0 +1,4 @@
+# Test-only dependencies for the FairLint-DL backend.
+# Install with: pip install -r requirements-test.txt
+pytest>=7.0
+httpx>=0.24        # required by fastapi.testclient for the endpoint tests
