@@ -5,7 +5,7 @@
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-009688.svg)](https://fastapi.tiangolo.com/)
 
-**FairLint-DL** is a VS Code extension designed to detect, analyze, and localize fairness defects in machine learning datasets using deep neural networks. Based on research methodologies like DICE (Distribution-Aware Input Causal Explanation) and NeuFair, this tool integrates advanced fairness testing directly into the development workflow.
+**FairLint-DL** is an editor-native extension that detects, analyzes, and localizes fairness defects in machine learning datasets using deep neural networks. Based on research methodologies like DICE (Distribution-Aware Input Causal Explanation) and NeuFair, this tool integrates advanced fairness testing directly into the development workflow. It is distributed on both the VS Code Marketplace and [Open VSX](https://open-vsx.org/extension/ArchitRathod/fairlint-dl), so it installs unmodified in VS Code and any VS Code-compatible IDE, including **Cursor** and **Antigravity**. Because the backend is a plain HTTP/REST service, the same analysis can also be driven from a CI job or a script.
 
 ---
 
@@ -183,6 +183,8 @@ Or install via the command line:
 code --install-extension ArchitRathod.fairlint-dl
 ```
 
+**Using Cursor, Antigravity, or another VS Code-compatible IDE?** Install from [Open VSX](https://open-vsx.org/extension/ArchitRathod/fairlint-dl) (search "FairLint-DL" in the extensions panel, or download the VSIX and install it manually). The extension runs unmodified.
+
 ### Step 2: Install Python Dependencies
 
 FairLint-DL requires **Python 3.9+** installed on your system. The extension bundles the backend code, but you need to install the Python packages:
@@ -204,6 +206,28 @@ If the backend server fails to start, check that:
 -   Python 3.9+ is installed and accessible from your terminal
 -   All required Python packages are installed
 -   Port 8765 is not in use by another application
+
+---
+
+## Testing
+
+FairLint-DL ships with automated tests for both components.
+
+**Backend (Python).** 19 unit tests exercise the core analysis: QID (Shannon and min-entropy / disparate impact), the two-phase discriminatory-instance search, causal layer/neuron localization, group-fairness metrics, internal-space PCA, the SHAP and LIME explainers, model-cache key determinism, data preprocessing, and the REST endpoints.
+
+```bash
+cd python_backend
+pip install -r requirements-test.txt      # pytest + httpx
+python -m pytest tests/ -q                 # 19 passed
+# or, with no extra dependencies:
+python tests/test_backend.py
+```
+
+**Extension (TypeScript).** Unit tests for the composite fairness-score logic run on Node's built-in test runner:
+
+```bash
+npm test
+```
 
 ---
 
@@ -333,6 +357,24 @@ FairLint-DL uses a **6-step analysis pipeline**:
 6.  **Explain** — SHAP and LIME provide global and local feature importance explanations
 
 The extension runs a local FastAPI server (`localhost:8765`) that handles all computation. The server starts automatically when you trigger an analysis and shuts down when VS Code closes.
+
+---
+
+## Evaluation
+
+We evaluated FairLint-DL on three tabular fairness benchmarks with the default proxy DNN (hidden layers 64-32-16-8-4, 30 epochs). Analysis covers 500 sampled test instances for Adult and Bank Marketing, and 200 for German Credit.
+
+| Metric | Adult Census | German Credit | Bank Marketing |
+|---|---|---|---|
+| Protected attributes | age, race, sex, native-country | age, sex | age, marital |
+| Mean QID (bits) | 0.619 | 0.935 | 0.284 |
+| Max QID (bits) | 1.000 | 1.000 | 0.993 |
+| Mean disparate impact | 0.581 | 0.939 | 0.815 |
+| Discriminatory (QID > 0.1) | 96.0% | 100.0% | 51.6% |
+| Violating 80% rule | 69.8% | 3.5% | 42.2% |
+| Composite fairness score | 41 | 46 | 75 |
+
+Individual discrimination varies widely across datasets. German Credit is the most severe at the individual level, and it also illustrates that individual (QID) and group (four-fifths) views can disagree: nearly every instance is individually discriminatory even though its aggregate disparate-impact ratio (0.939) satisfies the four-fifths rule. Bank Marketing is the mildest. The German Credit and Bank Marketing numbers are produced by a seeded run and are reproducible.
 
 ---
 
