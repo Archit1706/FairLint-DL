@@ -69,7 +69,7 @@ def prepared_csv(name, cfg):
     import pandas as pd
     path = os.path.join(DATASETS, cfg["file"])
     df = pd.read_csv(path, skipinitialspace=True)
-    if df[cfg["label"]].dtype == object:
+    if not pd.api.types.is_numeric_dtype(df[cfg["label"]]):
         df[cfg["label"]] = LabelEncoder().fit_transform(df[cfg["label"]].astype(str))
         out = os.path.join(DATASETS, f"_prepared_{cfg['file']}")
         df.to_csv(out, index=False)
