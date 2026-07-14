@@ -107,8 +107,8 @@ class DataPreprocessor:
         X = df[feature_columns].copy()
         y = df[label_column].copy()
 
-        # Handle categorical features
-        categorical_cols = X.select_dtypes(include=["object"]).columns
+        # Handle categorical features (include pandas string dtype, default in pandas 3.0)
+        categorical_cols = X.select_dtypes(include=["object", "string"]).columns
         for col in categorical_cols:
             le = LabelEncoder()
             X[col] = le.fit_transform(X[col].astype(str))
@@ -122,10 +122,10 @@ class DataPreprocessor:
         X_scaled = scaler.fit_transform(X)
         self.scalers["features"] = scaler
 
-        # Encode labels if categorical
-        if y.dtype == "object":
+        # Encode labels if non-numeric (object or pandas string dtype)
+        if not pd.api.types.is_numeric_dtype(y):
             le = LabelEncoder()
-            y = le.fit_transform(y)
+            y = le.fit_transform(y.astype(str))
             self.label_encoders["label"] = le
 
         # Split data
