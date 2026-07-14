@@ -63,9 +63,11 @@ Expected (seeded) output:
 | Model accuracy (%) | 84.1 | 68.5 | 88.3 |
 | Composite score | 43 | 46 | 75 |
 
+Values are deterministic on a given platform but may differ by up to ~0.01 across platforms (e.g., Linux container vs. Windows host) because of CPU/BLAS floating-point nondeterminism in DNN training; the qualitative conclusions are unchanged.
+
 ### Claims supported by this artifact
 - **Adult Census (accepted paper, Table 2): pervasive individual discrimination.** `reproduce.py` yields mean QID ~0.601 and ~98.6% discriminatory instances, supporting the paper's claim (reported as 0.619 / 96.0%; see the caveat below).
-- **Extended evaluation (camera-ready revision): discrimination varies widely across datasets.** German Credit is most severe (mean QID 0.935, ~100% discriminatory), Bank Marketing mildest (0.284, 51.6%). Reproduced exactly.
+- **Extended evaluation (camera-ready revision): discrimination varies widely across datasets.** German Credit is most severe (mean QID 0.935, ~100% discriminatory), Bank Marketing mildest (~0.28, ~51%). Reproduced within the small cross-platform tolerance noted above.
 - **Individual vs. group divergence on German Credit**: nearly all instances individually discriminatory while the aggregate disparate-impact ratio (0.939) satisfies the four-fifths rule. Reproduced.
 - **The full six-step pipeline runs end-to-end** (QID, search, debugging, group fairness, SHAP/LIME). Exercised by the test suite and `reproduce.py`.
 
