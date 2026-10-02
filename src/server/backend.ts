@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, spawnSync, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import axios from 'axios';
@@ -9,28 +9,91 @@ import { showError } from './errors';
 
 let serverProcess: ChildProcess | null = null;
 
+/** Modules the backend cannot start without. */
+const REQUIRED_MODULES = ['fastapi', 'uvicorn', 'torch', 'pandas', 'sklearn', 'shap', 'lime'];
+
+export const PIP_INSTALL_HINT =
+    'pip install torch fastapi uvicorn "pandas<3.0" "numpy<2.3" scikit-learn scipy lime shap';
+
 /**
- * Resolve the Python executable to use for the backend.
- * Priority: python_backend/venv -> workspace interpreter -> python3
+ * Report which of REQUIRED_MODULES a candidate interpreter is missing.
+ * Returns null if the executable cannot be run at all.
+ *
+ * This check exists because an interpreter that merely *exists* is not enough.
+ * A machine can easily have several Pythons (a Store build on PATH as `python3`,
+ * a python.org build holding the packages), and picking the wrong one used to
+ * fail silently: uvicorn never started, and the resulting connection failure was
+ * reported to the user as an unrelated "empty CSV" error.
  */
-function resolvePythonPath(backendPath: string): string {
-    // Check for venv inside python_backend (Windows and Unix paths)
-    const venvPythonWin = path.join(backendPath, 'venv', 'Scripts', 'python.exe');
-    const venvPythonUnix = path.join(backendPath, 'venv', 'bin', 'python');
-
-    if (fs.existsSync(venvPythonWin)) {
-        console.log(`Using venv Python: ${venvPythonWin}`);
-        return venvPythonWin;
+function missingModules(pythonPath: string): string[] | null {
+    // `import importlib.util` explicitly: a bare `import importlib` does not
+    // reliably bind the `util` submodule, which made this probe raise on some
+    // interpreters and look like "could not be executed".
+    const probe = `import importlib.util;print(','.join(m for m in ${JSON.stringify(
+        REQUIRED_MODULES,
+    )} if importlib.util.find_spec(m) is None))`;
+    const res = spawnSync(pythonPath, ['-c', probe], { encoding: 'utf8', timeout: 60000 });
+    if (res.error || res.status !== 0) {
+        return null;
     }
-    if (fs.existsSync(venvPythonUnix)) {
-        console.log(`Using venv Python: ${venvPythonUnix}`);
-        return venvPythonUnix;
+    return res.stdout.trim() ? res.stdout.trim().split(',') : [];
+}
+
+export interface PythonResolution {
+    pythonPath: string | null;
+    /** Every candidate tried, with why it was rejected. For the error message. */
+    tried: { path: string; reason: string }[];
+}
+
+/**
+ * Resolve a Python executable that can actually run the backend.
+ *
+ * Candidates are tried in order of how likely they are to be the one the user
+ * provisioned, and each is verified to import the required modules before use.
+ */
+export function resolvePython(backendPath: string): PythonResolution {
+    const candidates: string[] = [];
+    const push = (p: string | undefined | null) => {
+        if (p && !candidates.includes(p)) {
+            candidates.push(p);
+        }
+    };
+
+    // 1. A venv alongside the backend is unambiguous: it was made for this.
+    const venvWin = path.join(backendPath, 'venv', 'Scripts', 'python.exe');
+    const venvUnix = path.join(backendPath, 'venv', 'bin', 'python');
+    if (fs.existsSync(venvWin)) {
+        push(venvWin);
+    }
+    if (fs.existsSync(venvUnix)) {
+        push(venvUnix);
     }
 
-    // Fall back to workspace configured interpreter or system python
-    const configured = vscode.workspace.getConfiguration('python').get<string>('defaultInterpreterPath') || 'python3';
-    console.log(`No venv found in python_backend, falling back to: ${configured}`);
-    return configured;
+    // 2. Whatever the user has told VS Code to use.
+    push(vscode.workspace.getConfiguration('python').get<string>('defaultInterpreterPath'));
+    push(vscode.workspace.getConfiguration('fairlint-dl').get<string>('python.interpreterPath'));
+
+    // 3. Plain interpreters on PATH. `python` first: on Windows `python3` is
+    //    often the Microsoft Store build, which rarely has the packages.
+    push('python');
+    push('python3');
+
+    const tried: { path: string; reason: string }[] = [];
+    for (const candidate of candidates) {
+        const missing = missingModules(candidate);
+        if (missing === null) {
+            tried.push({ path: candidate, reason: 'could not be executed' });
+            continue;
+        }
+        if (missing.length > 0) {
+            tried.push({ path: candidate, reason: `missing ${missing.join(', ')}` });
+            continue;
+        }
+        console.log(`Using Python: ${candidate}`);
+        return { pythonPath: candidate, tried };
+    }
+
+    return { pythonPath: null, tried };
 }
 
 export async function startBackend(context: vscode.ExtensionContext): Promise<void> {
@@ -50,10 +113,6 @@ export async function startBackend(context: vscode.ExtensionContext): Promise<vo
     }
 
     const backendPath = context.asAbsolutePath('python_backend');
-    const pythonPath = resolvePythonPath(backendPath);
-
-    console.log(`Starting backend at: ${backendPath} on port ${serverPort}`);
-    console.log(`Using Python: ${pythonPath}`);
 
     // Check that python_backend directory exists
     if (!fs.existsSync(backendPath)) {
@@ -65,6 +124,31 @@ export async function startBackend(context: vscode.ExtensionContext): Promise<vo
         );
         return;
     }
+
+    // Pick an interpreter that can actually import the backend's dependencies.
+    // Reported up front, because a half-usable interpreter otherwise fails later
+    // as an unrelated-looking connection error.
+    updateStatusBar('$(sync~spin) Finding Python...', 'Looking for an interpreter with the backend dependencies');
+    const { pythonPath, tried } = resolvePython(backendPath);
+
+    if (!pythonPath) {
+        setStatusBarError('No usable Python');
+        const detail = tried.length
+            ? tried.map((t) => `  • ${t.path} — ${t.reason}`).join('\n')
+            : '  (no interpreters found)';
+        showError(
+            'Python Dependencies Missing',
+            `No Python interpreter with the required packages was found.\n\n` +
+                `Interpreters tried:\n${detail}\n\n` +
+                `Install the dependencies with:\n  ${PIP_INSTALL_HINT}\n\n` +
+                `If the packages are installed under a different interpreter, point VS Code at it ` +
+                `via the "python.defaultInterpreterPath" setting.`,
+        );
+        return;
+    }
+
+    console.log(`Starting backend at: ${backendPath} on port ${serverPort}`);
+    console.log(`Using Python: ${pythonPath}`);
 
     // Check requirements.txt exists and suggest install
     const requirementsPath = path.join(backendPath, 'requirements.txt');
