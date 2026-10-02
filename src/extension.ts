@@ -57,7 +57,14 @@ async function analyzeDataset(uri: vscode.Uri | undefined, forceRetrain: boolean
         async () => fetchColumns(filePath),
     );
 
-    if (!columnData || columnData.columns.length === 0) {
+    // A null result means the request itself failed; fetchColumns has already
+    // shown the real reason. Reporting it as an empty CSV here sent users
+    // looking at their data when the backend was simply unreachable.
+    if (!columnData) {
+        return;
+    }
+
+    if (columnData.columns.length === 0) {
         showError('Empty Dataset', 'The CSV file appears to be empty or has no columns.');
         return;
     }
