@@ -13,7 +13,7 @@ import json
 from models.fairness_dnn import FairnessDetectorDNN, DNNTrainer
 from analyzers.qid_analyzer import QIDAnalyzer
 from analyzers.search import DiscriminatoryInstanceSearch
-from utils.data_loader import DataPreprocessor
+from utils.data_loader import DataPreprocessor, detect_delimiter
 from analyzers.causal_debugger import CausalDebugger
 
 
@@ -105,8 +105,11 @@ async def get_columns(request: ColumnsRequest):
                 detail="Only CSV files are supported. Please select a .csv file."
             )
 
-        # Read only header row for efficiency
-        df = pd.read_csv(request.file_path, nrows=0)
+        # Read only header row for efficiency. The delimiter is sniffed so that
+        # semicolon-separated files do not come back as a single column.
+        sep = detect_delimiter(request.file_path)
+
+        df = pd.read_csv(request.file_path, nrows=0, sep=sep)
         columns = df.columns.tolist()
 
         if not columns:
@@ -116,8 +119,15 @@ async def get_columns(request: ColumnsRequest):
             )
 
         # Also get sample data for preview (first 3 rows)
-        df_sample = pd.read_csv(request.file_path, nrows=3)
-        sample_data = df_sample.to_dict('records')
+        df_sample = pd.read_csv(request.file_path, nrows=3, sep=sep)
+        # NaN and inf are not JSON-serialisable and would fail during response
+        # encoding, outside this handler, surfacing as a bare 500. Datasets with
+        # missing cells (e.g. COMPAS) hit this on every request.
+        df_sample = df_sample.replace([float("inf"), float("-inf")], pd.NA)
+        sample_data = [
+            {k: (None if pd.isna(v) else v) for k, v in row.items()}
+            for row in df_sample.to_dict('records')
+        ]
 
         # Auto-detect sensitive columns for pre-selection
         preprocessor = DataPreprocessor()
