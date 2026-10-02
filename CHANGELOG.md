@@ -2,6 +2,16 @@
 
 All notable changes to the "FairLint-DL" extension will be documented in this file.
 
+## [1.0.4] - 2026-10-02
+
+### Fixed
+- `/columns` returned a bare HTTP 500 for any CSV with a missing value in its first three rows. The endpoint's row preview passed `NaN` straight to the JSON encoder, which rejects it, and because the failure happened during response serialisation rather than inside the handler it bypassed the error handling and produced no diagnostic. `NaN` and infinities are now encoded as `null`. Affected standard benchmarks such as COMPAS.
+- Semicolon-separated CSVs were silently parsed as a single column, with no error, leaving an unusable column list. The delimiter is now sniffed from the file header (`utils.data_loader.detect_delimiter`) and applied in both `/columns` and `load_and_preprocess`, so the two always agree. Affected the UCI Bank Marketing files as distributed.
+- The pandas 3.0 string-dtype handling from the artifact release is now in the published extension; it landed after the 1.0.3 version bump and so missed that release.
+
+### Changed
+- README install command pins `pandas<3.0` and `numpy<2.3`, matching `python_backend/requirements.txt`, and explains why.
+
 ## [1.0.3] - 2026-07-02
 
 ### Changed
