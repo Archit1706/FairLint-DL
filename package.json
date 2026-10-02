@@ -2,7 +2,7 @@
     "name": "fairlint-dl",
     "displayName": "FairLint-DL",
     "description": "Deep Learning-based fairness debugging for ML datasets using PyTorch and information-theoretic analysis (DICE/NeuFair inspired)",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "preview": true,
     "serverInfo": {
         "name": "FairLint-DL",
@@ -137,6 +137,12 @@
                     "description": "Port number for the Python backend server",
                     "minimum": 1024,
                     "maximum": 65535,
+                    "scope": "window"
+                },
+                "fairlint-dl.python.interpreterPath": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Path to the Python interpreter used for the analysis backend. Leave empty to detect one automatically. Set this if the dependencies are installed under an interpreter FairLint-DL does not find on its own.",
                     "scope": "window"
                 },
                 "fairlint-dl.detection.autoDetectProtected": {
