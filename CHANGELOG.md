@@ -2,6 +2,15 @@
 
 All notable changes to the "FairLint-DL" extension will be documented in this file.
 
+## [1.0.5] - 2026-10-02
+
+### Fixed
+- The backend could be started with a Python interpreter that lacked its dependencies. On a machine with more than one Python, the fallback picked `python3`, which on Windows is often the Microsoft Store build, while the packages had been installed under a different interpreter. `uvicorn` then never started, and the resulting connection failure surfaced to the user as **"The CSV file appears to be empty or has no columns"**, pointing at the data rather than the real cause. Interpreters are now verified to import every required module before one is chosen, `python` is preferred over `python3`, and if none qualify the error names each interpreter tried, what it was missing, and the exact `pip install` command.
+- A failed `/columns` request was reported as an empty dataset. The request failure already raises its own error, so the misleading second message is gone.
+
+### Added
+- `fairlint-dl.python.interpreterPath` setting, to point the extension at a specific interpreter when automatic detection picks the wrong one.
+
 ## [1.0.4] - 2026-10-02
 
 ### Fixed
