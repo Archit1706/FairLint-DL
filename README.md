@@ -190,8 +190,10 @@ code --install-extension ArchitRathod.fairlint-dl
 FairLint-DL requires **Python 3.9+** installed on your system. The extension bundles the backend code, but you need to install the Python packages:
 
 ```bash
-pip install torch fastapi uvicorn pandas numpy scikit-learn scipy lime shap
+pip install torch fastapi uvicorn "pandas<3.0" "numpy<2.3" scikit-learn scipy lime shap
 ```
+
+> **Why the version bounds:** pandas 3.0 infers text columns as the `string` dtype rather than `object`, which changes how labels are encoded. The analysis code handles both, but pinning keeps results reproducible. These are the same bounds as `python_backend/requirements.txt`.
 
 > **Tip:** If you use a virtual environment, make sure VS Code is configured to use the correct Python interpreter (`Ctrl+Shift+P` → `Python: Select Interpreter`).
 
@@ -338,7 +340,7 @@ Configure FairLint-DL via VS Code Settings (`Ctrl+,` → search "fairlint"):
 
 | Problem                               | Solution                                                                                                                                     |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| **Server Startup Failed**             | Ensure Python 3.9+ is installed and packages are installed via `pip install torch fastapi uvicorn pandas numpy scikit-learn scipy lime shap` |
+| **Server Startup Failed**             | Ensure Python 3.9+ is installed and packages are installed via `pip install torch fastapi uvicorn "pandas<3.0" "numpy<2.3" scikit-learn scipy lime shap` |
 | **Cannot connect to analysis server** | Restart VS Code, or check if port 8765 is already in use (`lsof -i :8765` on Mac/Linux, `netstat -ano                                        | findstr 8765` on Windows) |
 | **Training is slow**                  | Reduce epochs in settings, or use a smaller dataset. Cached models load instantly on repeat runs.                                            |
 | **Charts not rendering**              | Ensure you're not blocking CDN resources — Plotly.js is loaded from CDN in the webview                                                       |
