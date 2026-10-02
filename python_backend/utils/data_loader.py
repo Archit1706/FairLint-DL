@@ -2,6 +2,7 @@
 Data loading and preprocessing utilities.
 """
 
+import csv
 import pandas as pd
 import numpy as np
 import torch
@@ -9,6 +10,32 @@ from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from typing import Tuple, List, Dict
+
+
+def detect_delimiter(file_path: str, default: str = ",") -> str:
+    """Sniff a CSV's delimiter from its first two lines.
+
+    Several standard fairness benchmarks ship semicolon-separated (the UCI Bank
+    Marketing files, for example). pandas' C parser does not error on those, it
+    just returns a single column, so the problem surfaces far downstream as an
+    unusable column list. Sniffing the header is cheap and keeps the fast C
+    parser, unlike sep=None which forces the slower Python engine.
+
+    Falls back to `default` whenever detection is not conclusive.
+    """
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="replace", newline="") as fh:
+            sample = fh.readline() + fh.readline()
+    except OSError:
+        return default
+
+    if not sample.strip():
+        return default
+
+    try:
+        return csv.Sniffer().sniff(sample, delimiters=",;\t|").delimiter
+    except csv.Error:
+        return default
 
 
 class FairnessDataset(Dataset):
@@ -91,8 +118,8 @@ class DataPreprocessor:
         Returns:
             Dictionary with train/val/test loaders and metadata
         """
-        # Load data
-        df = pd.read_csv(file_path)
+        # Load data (delimiter sniffed: not every benchmark CSV is comma-separated)
+        df = pd.read_csv(file_path, sep=detect_delimiter(file_path))
 
         # Auto-detect sensitive features if not provided
         if sensitive_features is None:
